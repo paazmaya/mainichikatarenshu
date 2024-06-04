@@ -129,6 +129,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "delegate"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e018fccbeeb50ff26562ece792ed06659b9c2dae79ece77c4456bb10d9bf79b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.66",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -265,15 +276,16 @@ dependencies = [
 
 [[package]]
 name = "esp-hal"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e19440eb58fd1dd0c4f6722c953f7026571210c70ce69956d022faeb8fe4b4"
+checksum = "44f1bf3b1b34bbeb59e24e630f26e21b95f9c2bb7c0a53361ae5a97c67936566"
 dependencies = [
  "basic-toml",
  "bitfield",
  "bitflags",
  "cfg-if",
  "critical-section",
+ "delegate",
  "document-features",
  "embedded-can",
  "embedded-dma",
@@ -299,9 +311,9 @@ dependencies = [
 
 [[package]]
 name = "esp-hal-procmacros"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2a9e9df075eb0c1e0a4349a4317c86b01be2acabe6f69d935c9c71d8a99e56a"
+checksum = "788b535b8127a8f0d1f40a8d8e300e57a8c361c492d660dd08fe8e9a1b96ee3c"
 dependencies = [
  "darling",
  "document-features",
@@ -315,9 +327,9 @@ dependencies = [
 
 [[package]]
 name = "esp-metadata"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a97109e81e9fb68cbf838ffda09cebbc9b25fe12f8b8a5e1b32391561e7c153"
+checksum = "654b8f14bf076fe5995fe94fabbe41a98041e1f2f801e5b3404dcae87e476db6"
 dependencies = [
  "basic-toml",
  "lazy_static",
@@ -348,9 +360,9 @@ dependencies = [
 
 [[package]]
 name = "esp32"
-version = "0.30.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "899e1a52a7ee96d95ac00a92b39c0d5cbe718018a0ab810adf3162afe6dad44b"
+checksum = "da8c87b309b29f0effa613444cf3bd6d54c533627f3e5f8e244994d6726aa78f"
 dependencies = [
  "critical-section",
  "vcell",
