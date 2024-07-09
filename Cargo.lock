@@ -256,12 +256,13 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "esp-backtrace"
-version = "0.12.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613da39ca9dde7a2360ff1a273da78d9ff97e82ea095b520fb6b5dabf7192c6f"
+checksum = "d5b1720f2275eb87dbde9607cb2ab6a10894a4502045c0924c0f265aaceb3118"
 dependencies = [
  "esp-build",
  "esp-println",
+ "rustversion",
  "semihosting",
 ]
 
