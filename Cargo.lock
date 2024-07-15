@@ -256,13 +256,12 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "esp-backtrace"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5b1720f2275eb87dbde9607cb2ab6a10894a4502045c0924c0f265aaceb3118"
+checksum = "ff4c1f3dda877778cea923e7ebea52e065641b4bb3b5a553633de745b5e87e69"
 dependencies = [
  "esp-build",
- "esp-println",
- "rustversion",
+ "esp-println 0.10.0",
  "semihosting",
 ]
 
@@ -348,6 +347,15 @@ checksum = "e98f0f58453dd2ce08d99228fc8757fad39d05dfd26643665d1093b8844f42cc"
 dependencies = [
  "critical-section",
  "log",
+]
+
+[[package]]
+name = "esp-println"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58cd4fa834980ba64aad00a5c2c1a630020af984eadef65a125cb99085f6f54c"
+dependencies = [
+ "esp-build",
 ]
 
 [[package]]
@@ -478,7 +486,7 @@ dependencies = [
  "embedded-hal-mock",
  "esp-backtrace",
  "esp-hal",
- "esp-println",
+ "esp-println 0.9.1",
  "log",
 ]
 
@@ -663,9 +671,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "semihosting"
-version = "0.1.10"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7f8592b424e48e4d0d59faf9fb126077542b3f5ceb0fa6468229619d98743df"
+checksum = "999408e6628a9b637a47b6550310452084e88c29e1c3a09b65c50256ca6aaad6"
 
 [[package]]
 name = "serde"
