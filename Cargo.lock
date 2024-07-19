@@ -267,7 +267,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a34817530dceba397172d6a9fb660b684a73a3a591fbe7fb0da27bed796f270"
 dependencies = [
  "esp-build",
- "esp-println 0.10.0",
+ "esp-println",
  "semihosting",
 ]
 
@@ -348,21 +348,14 @@ dependencies = [
 
 [[package]]
 name = "esp-println"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e98f0f58453dd2ce08d99228fc8757fad39d05dfd26643665d1093b8844f42cc"
-dependencies = [
- "critical-section",
- "log",
-]
-
-[[package]]
-name = "esp-println"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58cd4fa834980ba64aad00a5c2c1a630020af984eadef65a125cb99085f6f54c"
 dependencies = [
+ "critical-section",
  "esp-build",
+ "log",
+ "portable-atomic",
 ]
 
 [[package]]
@@ -493,7 +486,7 @@ dependencies = [
  "embedded-hal-mock",
  "esp-backtrace",
  "esp-hal",
- "esp-println 0.9.1",
+ "esp-println",
  "log",
 ]
 
