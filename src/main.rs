@@ -1,194 +1,175 @@
 #![no_std]
 #![no_main]
-#![deny(warnings)]
 
+use esp_alloc as _;
 use esp_backtrace as _;
-use esp_hal::{clock::ClockControl, delay::Delay, peripherals::Peripherals, prelude::*};
+use esp_println::println;
 
-
-use embedded_graphics::{
-    mono_font::MonoTextStyleBuilder,
+use esp_hal::{
+    clock::CpuClock,
+    delay::Delay,
+    gpio::{AnyInputPin, Level, OutputOpenDrain, PinDriver, Pull, *},
+    i2c::master::{Config, I2c},
+    init,
+    modem::Modem,
+    nvs::EspDefaultNvsPartition,
+    peripherals::Peripherals,
     prelude::*,
-    primitives::{Circle, Line, PrimitiveStyle},
-    text::{Baseline, Text, TextStyleBuilder},
+    sleep::{self, Duration},
+    spi::{self, Spi, SpiBus, SpiDevice},
 };
-use embedded_hal::delay::DelayNs;
+
+use defmt::Format;
+
+use epd_waveshare::prelude::*;
 use epd_waveshare::{
     color::*,
-    epd2in13_v2::{Display2in13, Epd2in13},
-    graphics::DisplayRotation,
-    prelude::*,
-};
-use linux_embedded_hal::{
-    spidev::{self, SpidevOptions},
-    sysfs_gpio::Direction,
-    Delay, SPIError, SpidevDevice, SysfsPin,
+    epd2in9::{Epd2in9, HEIGHT, WIDTH},
+    graphics::VarDisplay,
 };
 
-// The pins in this example are for the Universal e-Paper Raw Panel Driver HAT
-// activate spi, gpio in raspi-config
-// needs to be run with sudo because of some sysfs_gpio permission problems and follow-up timing problems
-// see https://github.com/rust-embedded/rust-sysfs-gpio/issues/5 and follow-up issues
+type SpiDev = SpiDeviceDriver<'static, SpiDriver<'static>>;
 
-#[entry]
-fn main() -> Result<(), SPIError> {
-    let peripherals = Peripherals::take();
-    let system = peripherals.SYSTEM.split();
+type EpdDriver = Epd2in9<
+    SpiDev,
+    PinDriver<'static, AnyOutputPin, Output>,
+    PinDriver<'static, AnyInputPin, Input>,
+    PinDriver<'static, AnyOutputPin, Output>,
+    PinDriver<'static, AnyOutputPin, Output>,
+    Delay,
+>;
 
-    let clocks = ClockControl::max(system.clock_control).freeze();
-    let delay = Delay::new(&clocks);
-
-    esp_println::logger::init_logger_from_env();
-
-    loop {
-        log::info!("Hello world!");
-        delay.delay(500.millis());
-    }
-
-
-
-    // Configure SPI
-    // Settings are taken from
-    let mut spi = SpidevDevice::open("/dev/spidev0.0").expect("spidev directory");
-    let options = SpidevOptions::new()
-        .bits_per_word(8)
-        .max_speed_hz(4_000_000)
-        .mode(spidev::SpiModeFlags::SPI_MODE_0)
-        .build();
-    spi.configure(&options).expect("spi configuration");
-
-    // Configure Digital I/O Pin to be used as Chip Select for SPI
-    let cs = SysfsPin::new(26); //BCM7 CE0
-    cs.export().expect("cs export");
-    while !cs.is_exported() {}
-    cs.set_direction(Direction::Out).expect("CS Direction");
-    cs.set_value(1).expect("CS Value set to 1");
-
-    let busy = SysfsPin::new(24); // GPIO 24, board J-18
-    busy.export().expect("busy export");
-    while !busy.is_exported() {}
-    busy.set_direction(Direction::In).expect("busy Direction");
-    //busy.set_value(1).expect("busy Value set to 1");
-
-    let dc = SysfsPin::new(25); // GPIO 25, board J-22
-    dc.export().expect("dc export");
-    while !dc.is_exported() {}
-    dc.set_direction(Direction::Out).expect("dc Direction");
-    dc.set_value(1).expect("dc Value set to 1");
-
-    let rst = SysfsPin::new(17); // GPIO 17, board J-11
-    rst.export().expect("rst export");
-    while !rst.is_exported() {}
-    rst.set_direction(Direction::Out).expect("rst Direction");
-    rst.set_value(1).expect("rst Value set to 1");
-
-    let mut delay = Delay {};
-
-    let mut epd2in13 =
-        Epd2in13::new(&mut spi, busy, dc, rst, &mut delay, None).expect("eink initalize error");
-
-    //println!("Test all the rotations");
-    let mut display = Display2in13::default();
-
-    display.set_rotation(DisplayRotation::Rotate0);
-    draw_text(&mut display, "Rotate 0!", 5, 50);
-
-    display.set_rotation(DisplayRotation::Rotate90);
-    draw_text(&mut display, "Rotate 90!", 5, 50);
-
-    display.set_rotation(DisplayRotation::Rotate180);
-    draw_text(&mut display, "Rotate 180!", 5, 50);
-
-    display.set_rotation(DisplayRotation::Rotate270);
-    draw_text(&mut display, "Rotate 270!", 5, 50);
-
-    epd2in13.update_frame(&mut spi, display.buffer(), &mut delay)?;
-    epd2in13
-        .display_frame(&mut spi, &mut delay)
-        .expect("display frame new graphics");
-    delay.delay_ms(5000);
-
-    //println!("Now test new graphics with default rotation and some special stuff:");
-    display.clear(Color::White).ok();
-
-    // draw a analog clock
-    let _ = Circle::with_center(Point::new(64, 64), 80)
-        .into_styled(PrimitiveStyle::with_stroke(Color::Black, 1))
-        .draw(&mut display);
-    let _ = Line::new(Point::new(64, 64), Point::new(30, 40))
-        .into_styled(PrimitiveStyle::with_stroke(Color::Black, 4))
-        .draw(&mut display);
-    let _ = Line::new(Point::new(64, 64), Point::new(80, 40))
-        .into_styled(PrimitiveStyle::with_stroke(Color::Black, 1))
-        .draw(&mut display);
-
-    // draw white on black background
-    let style = MonoTextStyleBuilder::new()
-        .font(&embedded_graphics::mono_font::ascii::FONT_6X10)
-        .text_color(Color::White)
-        .background_color(Color::Black)
-        .build();
-    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
-
-    let _ = Text::with_text_style("It's working-WoB!", Point::new(90, 10), style, text_style)
-        .draw(&mut display);
-
-    // use bigger/different font
-    let style = MonoTextStyleBuilder::new()
-        .font(&embedded_graphics::mono_font::ascii::FONT_10X20)
-        .text_color(Color::White)
-        .background_color(Color::Black)
-        .build();
-
-    let _ = Text::with_text_style("It's working\nWoB!", Point::new(90, 40), style, text_style)
-        .draw(&mut display);
-
-    // Demonstrating how to use the partial refresh feature of the screen.
-    // Real animations can be used.
-    epd2in13
-        .set_refresh(&mut spi, &mut delay, RefreshLut::Quick)
-        .unwrap();
-    epd2in13.clear_frame(&mut spi, &mut delay).unwrap();
-
-    // a moving `Hello World!`
-    let limit = 10;
-    for i in 0..limit {
-        draw_text(&mut display, "  Hello World! ", 5 + i * 12, 50);
-
-        epd2in13
-            .update_and_display_frame(&mut spi, display.buffer(), &mut delay)
-            .expect("display frame new graphics");
-        delay.delay_ms(1_000);
-    }
-
-    // Show a spinning bar without any delay between frames. Shows how «fast»
-    // the screen can refresh for this kind of change (small single character)
-    display.clear(Color::White).ok();
-    epd2in13
-        .update_and_display_frame(&mut spi, display.buffer(), &mut delay)
-        .unwrap();
-
-    let spinner = ["|", "/", "-", "\\"];
-    for i in 0..10 {
-        display.clear(Color::White).ok();
-        draw_text(&mut display, spinner[i % spinner.len()], 10, 100);
-        epd2in13
-            .update_and_display_frame(&mut spi, display.buffer(), &mut delay)
-            .unwrap();
-    }
-
-    println!("Finished tests - going to sleep");
-    epd2in13.sleep(&mut spi, &mut delay)
+#[derive(Format, Debug)]
+pub enum MyError {
+    GpioError,
+    SpiError,
+    OtherError,
 }
 
-fn draw_text(display: &mut Display2in13, text: &str, x: i32, y: i32) {
-    let style = MonoTextStyleBuilder::new()
-        .font(&embedded_graphics::mono_font::ascii::FONT_6X10)
-        .text_color(Color::White)
-        .background_color(Color::Black)
-        .build();
+#[entry]
+fn main() -> ! {
+    // Initialize with the highest possible frequency for this chip
+    // https://docs.esp-rs.org/esp-hal/esp-hal/0.22.0/esp32c3/esp_hal/peripherals/index.html
+    let peripherals = init({
+        let mut config = esp_hal::Config::default();
+        config.cpu_clock = CpuClock::max();
+        config
+    });
 
-    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
+    esp_alloc::heap_allocator!(72 * 1024);
 
-    let _ = Text::with_text_style(text, Point::new(x, y), style, text_style).draw(display);
+    let mut delay = Delay::new();
+
+    let spi = Spi::new(peripherals.SPI1, 100.kHz(), spi::SpiMode::Mode0);
+
+    let i2c = I2c::new(peripherals.I2S0, Config::default());
+
+    println!("Hello world!");
+    delay.delay(500.millis());
+
+    // Use "exit" button to wake up
+    let wakeup_pin: AnyInputPin = peripherals.GPIO1.into_input().into();
+    let sleep_time = Duration::from_micros(5_000_000);
+    enter_deep_sleep(wakeup_pin, sleep_time);
+}
+
+fn youdoit() -> Result<(), MyError> {
+    // Bind the log crate to the ESP Logging facilities
+    println!("wakeup: {:?}", esp_hal::reset::WakeupReason::get());
+
+    let peripherals = init({
+        let mut config = esp_hal::Config::default();
+        config.cpu_clock = CpuClock::max();
+        config
+    });
+    let (_led_pin, wakeup_pin, modem, spi_driver, epd, delay) = gather_peripherals(peripherals)?;
+
+    // deep sleep for 1.5 hours (or on wakeup button press)
+    enter_deep_sleep(wakeup_pin.into(), Duration::from_secs(60 * 30 * 3));
+
+    unreachable!("in sleep");
+}
+
+fn gather_peripherals(
+    peripherals: Peripherals,
+) -> Result<(Gpio2, Gpio4, Modem, SpiDev, EpdDriver, Delay), MyError> {
+    let ledpin = peripherals.GPIO2;
+    let wakeup_pin = peripherals.GPIO4;
+
+    let modem = peripherals.modem;
+
+    let spi_p = peripherals.spi3;
+    let sclk: AnyOutputPin = peripherals.GPIO13.into();
+    let sdo: AnyOutputPin = peripherals.GPIO14.into();
+    let cs: AnyOutputPin = peripherals.GPIO15.into();
+    let busy_in: AnyInputPin = peripherals.GPIO25.into();
+    let rst: AnyOutputPin = peripherals.GPIO26.into();
+    let dc: AnyOutputPin = peripherals.GPIO27.into();
+
+    println!("create epd driver");
+    let (spi_driver, epd, delay) = create_epd_driver(spi_p, sclk, sdo, cs, busy_in, rst, dc)?;
+
+    Ok((ledpin, wakeup_pin, modem, spi_driver, epd, delay))
+}
+
+fn enter_deep_sleep(wakeup_pin: AnyInputPin, sleep_time: Duration) {
+    // Configure the wakeup pin as an input
+    let wakeup_pin = PinDriver::input(wakeup_pin).expect("Failed to configure wakeup pin");
+
+    // Enable external wakeup on the specified pin
+    sleep::enable_ext0_wakeup(wakeup_pin.pin(), sleep::WakeupLevel::Low)
+        .expect("Failed to enable ext0 wakeup");
+
+    // Log the deep sleep entry
+    println!("Entering deep sleep");
+
+    // Enter deep sleep
+    sleep::deep_sleep(sleep_time);
+
+    // The program will not reach this point because the device will be in deep sleep
+    unreachable!("We will be asleep by now");
+}
+
+fn create_epd_driver(
+    spi_p: spi::SPI3,
+    sclk: AnyOutputPin,
+    sdo: AnyOutputPin,
+    cs: AnyOutputPin,
+    busy_in: AnyInputPin,
+    rst: AnyOutputPin,
+    dc: AnyOutputPin,
+) -> Result<(SpiDev, EpdDriver, Delay), MyError> {
+    let mut driver = spi::SpiDeviceDriver::new_single(
+        spi_p,
+        sclk,
+        sdo,
+        Option::<gpio::AnyIOPin>::None,
+        Option::<gpio::AnyOutputPin>::None,
+        &spi::config::DriverConfig::new(),
+        &spi::config::Config::new().baudrate(10.MHz().into()),
+    )?;
+
+    println!("driver setup completed");
+    let mut delay = Delay {};
+
+    // Setup EPD
+    let epd_driver = Epd7in5::new(
+        &mut driver,
+        PinDriver::output(cs)?,
+        PinDriver::input(busy_in)?,
+        PinDriver::output(dc)?,
+        PinDriver::output(rst)?,
+        &mut delay,
+    )
+    .unwrap();
+
+    println!("epd setup completed");
+
+    Ok((driver, epd_driver, delay))
+}
+
+/// Retuns the size of a buffer necessary to hold the entire image
+pub fn get_buffer_size() -> usize {
+    // The height is multiplied by 2 because the red pixels essentially exist on a separate "layer"
+    epd_waveshare::buffer_len(WIDTH as usize, HEIGHT as usize * 2)
 }
