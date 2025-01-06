@@ -1,43 +1,36 @@
 #![no_std]
 #![no_main]
 
+use core::time::Duration;
+
 use esp_alloc as _;
 use esp_backtrace as _;
 use esp_println::println;
 
+use esp_hal::rtc_cntl::Rtc;
 use esp_hal::{
     clock::CpuClock,
     delay::Delay,
-    gpio::{AnyInputPin, Level, OutputOpenDrain, PinDriver, Pull, *},
-    i2c::master::{Config, I2c},
+    gpio::{AnyPin, Input, Level, OutputOpenDrain, OutputPin, Pin, Pull},
+    i2c::master::I2c,
     init,
-    modem::Modem,
-    nvs::EspDefaultNvsPartition,
     peripherals::Peripherals,
     prelude::*,
-    sleep::{self, Duration},
-    spi::{self, Spi, SpiBus, SpiDevice},
+    rtc_cntl::sleep::{self, RtcSleepConfig, TimerWakeupSource},
+    spi::master::Spi,
+    spi::SpiMode,
 };
 
 use defmt::Format;
 
-use epd_waveshare::prelude::*;
-use epd_waveshare::{
-    color::*,
-    epd2in9::{Epd2in9, HEIGHT, WIDTH},
-    graphics::VarDisplay,
+use epd_waveshare::{color::*, graphics::VarDisplay};
+use epd_waveshare::{epd2in9::*, prelude::*};
+
+use embedded_graphics::{
+    pixelcolor::BinaryColor::On as Black,
+    prelude::*,
+    primitives::{Line, PrimitiveStyle},
 };
-
-type SpiDev = SpiDeviceDriver<'static, SpiDriver<'static>>;
-
-type EpdDriver = Epd2in9<
-    SpiDev,
-    PinDriver<'static, AnyOutputPin, Output>,
-    PinDriver<'static, AnyInputPin, Input>,
-    PinDriver<'static, AnyOutputPin, Output>,
-    PinDriver<'static, AnyOutputPin, Output>,
-    Delay,
->;
 
 #[derive(Format, Debug)]
 pub enum MyError {
@@ -46,126 +39,88 @@ pub enum MyError {
     OtherError,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FloatMeasurement {
+    /// The measurred temperature in degree Celsius (°C).
+    pub temperature: f32,
+    /// The measured relative humidity in percent (%).
+    pub humidity: f32,
+}
+
 #[entry]
 fn main() -> ! {
+    println!("wakeup: {:?}", esp_hal::reset::wakeup_cause());
+
     // Initialize with the highest possible frequency for this chip
-    // https://docs.esp-rs.org/esp-hal/esp-hal/0.22.0/esp32c3/esp_hal/peripherals/index.html
+    // https://docs.esp-rs.org/esp-hal/esp-hal/0.22.0/esp32s3/esp_hal/peripherals/index.html
     let peripherals = init({
-        let mut config = esp_hal::Config::default();
+        let mut config: esp_hal::Config = esp_hal::Config::default();
         config.cpu_clock = CpuClock::max();
         config
     });
 
     esp_alloc::heap_allocator!(72 * 1024);
 
-    let mut delay = Delay::new();
+    let mut delay: Delay = Delay::new();
 
-    let spi = Spi::new(peripherals.SPI1, 100.kHz(), spi::SpiMode::Mode0);
-
-    let i2c = I2c::new(peripherals.I2S0, Config::default());
+    //let epd = create_epd_driver(&peripherals, &delay)?;
 
     println!("Hello world!");
     delay.delay(500.millis());
 
     // Use "exit" button to wake up
-    let wakeup_pin: AnyInputPin = peripherals.GPIO1.into_input().into();
-    let sleep_time = Duration::from_micros(5_000_000);
-    enter_deep_sleep(wakeup_pin, sleep_time);
+    let wakeup_pin: AnyPin = peripherals.GPIO1.degrade();
+    let sleep_time: Duration = Duration::from_secs(5);
+
+    let mut cfg = RtcSleepConfig::deep();
+    cfg.set_rtc_fastmem_pd_en(false);
+    let wakeup_source = TimerWakeupSource::new(sleep_time);
+    let mut rtc = Rtc::new(peripherals.LPWR);
+    rtc.rwdt.enable();
+
+    delay.delay(500.millis());
+
+    rtc.sleep(&cfg, &[&wakeup_source]);
+
+    loop {}
 }
 
-fn youdoit() -> Result<(), MyError> {
-    // Bind the log crate to the ESP Logging facilities
-    println!("wakeup: {:?}", esp_hal::reset::WakeupReason::get());
+/*
+fn create_epd_driver(peripherals: &Peripherals, delay: &Delay) -> Result<(EpdDriver), MyError> {
 
-    let peripherals = init({
-        let mut config = esp_hal::Config::default();
-        config.cpu_clock = CpuClock::max();
-        config
-    });
-    let (_led_pin, wakeup_pin, modem, spi_driver, epd, delay) = gather_peripherals(peripherals)?;
+    // SCLK (Clock) – Line for the clock signal.
+    let sclk = peripherals.GPIO12.degrade();
+    // SS/CS (Slave Select/Chip Select) – Line for the master to select which slave to send data to.
+    let cs:AnyPin = peripherals.GPIO45.degrade();
+    // MOSI (Master Output/Slave Input) – Line for the master to send data to the slave.
+    let mosi:AnyPin = peripherals.GPIO11.degrade();
 
-    // deep sleep for 1.5 hours (or on wakeup button press)
-    enter_deep_sleep(wakeup_pin.into(), Duration::from_secs(60 * 30 * 3));
-
-    unreachable!("in sleep");
-}
-
-fn gather_peripherals(
-    peripherals: Peripherals,
-) -> Result<(Gpio2, Gpio4, Modem, SpiDev, EpdDriver, Delay), MyError> {
-    let ledpin = peripherals.GPIO2;
-    let wakeup_pin = peripherals.GPIO4;
-
-    let modem = peripherals.modem;
-
-    let spi_p = peripherals.spi3;
-    let sclk: AnyOutputPin = peripherals.GPIO13.into();
-    let sdo: AnyOutputPin = peripherals.GPIO14.into();
-    let cs: AnyOutputPin = peripherals.GPIO15.into();
-    let busy_in: AnyInputPin = peripherals.GPIO25.into();
-    let rst: AnyOutputPin = peripherals.GPIO26.into();
-    let dc: AnyOutputPin = peripherals.GPIO27.into();
-
-    println!("create epd driver");
-    let (spi_driver, epd, delay) = create_epd_driver(spi_p, sclk, sdo, cs, busy_in, rst, dc)?;
-
-    Ok((ledpin, wakeup_pin, modem, spi_driver, epd, delay))
-}
-
-fn enter_deep_sleep(wakeup_pin: AnyInputPin, sleep_time: Duration) {
-    // Configure the wakeup pin as an input
-    let wakeup_pin = PinDriver::input(wakeup_pin).expect("Failed to configure wakeup pin");
-
-    // Enable external wakeup on the specified pin
-    sleep::enable_ext0_wakeup(wakeup_pin.pin(), sleep::WakeupLevel::Low)
-        .expect("Failed to enable ext0 wakeup");
-
-    // Log the deep sleep entry
-    println!("Entering deep sleep");
-
-    // Enter deep sleep
-    sleep::deep_sleep(sleep_time);
-
-    // The program will not reach this point because the device will be in deep sleep
-    unreachable!("We will be asleep by now");
-}
-
-fn create_epd_driver(
-    spi_p: spi::SPI3,
-    sclk: AnyOutputPin,
-    sdo: AnyOutputPin,
-    cs: AnyOutputPin,
-    busy_in: AnyInputPin,
-    rst: AnyOutputPin,
-    dc: AnyOutputPin,
-) -> Result<(SpiDev, EpdDriver, Delay), MyError> {
-    let mut driver = spi::SpiDeviceDriver::new_single(
-        spi_p,
-        sclk,
-        sdo,
-        Option::<gpio::AnyIOPin>::None,
-        Option::<gpio::AnyOutputPin>::None,
-        &spi::config::DriverConfig::new(),
-        &spi::config::Config::new().baudrate(10.MHz().into()),
-    )?;
+    // 10.MHz()
+    let mut spi = Spi::new(
+        peripherals.SPI2,
+    )
+    .with_sck(sclk)
+    .with_mosi(mosi)
+    .with_cs(cs);
 
     println!("driver setup completed");
-    let mut delay = Delay {};
 
-    // Setup EPD
-    let epd_driver = Epd7in5::new(
-        &mut driver,
-        PinDriver::output(cs)?,
-        PinDriver::input(busy_in)?,
-        PinDriver::output(dc)?,
-        PinDriver::output(rst)?,
-        &mut delay,
-    )
-    .unwrap();
+    // SPI: SpiDevice,
+    // BUSY: InputPin, An output from the display, if LOW then the display is busy and cannot accept data.
+    let busy = peripherals.GPIO48.degrade();
+    // DC: OutputPin, Data/Command input. If held HIGH then the SPI bus is sending data, if LOW then it is sending command signals.
+    let dc = OutputPin::new(peripherals.GPIO46, Level::Low, OutputOpenDrain, Pull::Up).expect("Failed to configure DC pin");
+    // RST: OutputPin, External Reset, send this pin LOW to reset the display.
+    let rst = OutputPin::new(peripherals.GPIO47, Level::Low, OutputOpenDrain, Pull::Up).expect("Failed to configure RST pin");
+
+    let mut epd = Epd2in9::new(&mut spi, busy, dc, rst, &mut delay, None)?;
+
+    // Use display graphics from embedded-graphics
+    let mut display = Display2in9::default();
 
     println!("epd setup completed");
 
-    Ok((driver, epd_driver, delay))
+    Ok(epd_driver)
 }
 
 /// Retuns the size of a buffer necessary to hold the entire image
@@ -173,3 +128,4 @@ pub fn get_buffer_size() -> usize {
     // The height is multiplied by 2 because the red pixels essentially exist on a separate "layer"
     epd_waveshare::buffer_len(WIDTH as usize, HEIGHT as usize * 2)
 }
+*/
