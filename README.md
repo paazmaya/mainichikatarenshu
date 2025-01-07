@@ -68,11 +68,11 @@ Output would be something like:
 ╭──────────┬──────┬─────────┬─────────┬────────────────────┬───────────╮
 │ Name     ┆ Type ┆ SubType ┆ Offset  ┆ Size               ┆ Encrypted │
 ╞══════════╪══════╪═════════╪═════════╪════════════════════╪═══════════╡
-│ nvs      ┆ data ┆ nvs     ┆ 0x9000  ┆ 0x10000 (64KiB)    ┆ false     │
+│ nvs      ┆ data ┆ nvs     ┆ 0x9000  ┆ 0x8000 (32KiB)     ┆ false     │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
-│ phy_init ┆ data ┆ phy     ┆ 0x19000 ┆ 0x10000 (64KiB)    ┆ false     │
+│ phy_init ┆ data ┆ phy     ┆ 0x11000 ┆ 0x8000 (32KiB)     ┆ false     │
 ├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
-│ factory  ┆ app  ┆ factory ┆ 0x30000 ┆ 0x300000 (3072KiB) ┆ false     │
+│ factory  ┆ app  ┆ factory ┆ 0x20000 ┆ 0x200000 (2048KiB) ┆ false     │
 ╰──────────┴──────┴─────────┴─────────┴────────────────────┴───────────╯
 ```
 
@@ -211,6 +211,35 @@ I (83) boot: End of partition table
 I (86) boot: Loaded app from partition at offset 0x30000
 I (91) boot: Disabling RNG early entropy source...
 ```  
+
+## Debug symbols missing in dev profile
+
+```  
+xtensa-esp32-elf-readelf -S target/xtensa-esp32s3-none-elf/debug/mainichikatarenshu
+There are 4 section headers, starting at offset 0x60:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .symtab           SYMTAB          00000000 000034 000010 10      2   1  4
+  [ 2] .strtab           STRTAB          00000000 000044 000001 00      0   0  1
+  [ 3] .shstrtab         STRTAB          00000000 000045 00001b 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+``` 
+
+At this point
+idf.py erase-flash
+Chip erase completed successfully in 5.0s
+
+to see that there was all the time in use some older partition table, as now there is nothing...
+
+Use menuconfig to set the partion table file as `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"`. 
+
+Ok, the bootloader and partition table flashing needs to be done via `idf.py`, and the resulted bootloader used when application is flashed via `espflash`.
 
 
 ## License
