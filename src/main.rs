@@ -21,8 +21,6 @@ use esp_hal::{
     spi::SpiMode,
 };
 
-use defmt::Format;
-
 use epd_waveshare::{color::*, graphics::VarDisplay};
 use epd_waveshare::{epd2in9::*, prelude::*};
 
@@ -32,7 +30,8 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
 };
 
-#[derive(Format, Debug)]
+
+#[derive(Debug)]
 pub enum MyError {
     GpioError,
     SpiError,
@@ -49,7 +48,8 @@ pub struct FloatMeasurement {
 
 #[entry]
 fn main() -> ! {
-    println!("wakeup: {:?}", esp_hal::reset::wakeup_cause());
+    println!("Hello world!");
+    //println!("wakeup: {:?}", esp_hal::reset::wakeup_cause());
 
     // Initialize with the highest possible frequency for this chip
     // https://docs.esp-rs.org/esp-hal/esp-hal/0.22.0/esp32s3/esp_hal/peripherals/index.html
@@ -59,31 +59,31 @@ fn main() -> ! {
         config
     });
 
-    esp_alloc::heap_allocator!(72 * 1024);
+    //esp_alloc::heap_allocator!(72 * 1024);
 
     let mut delay: Delay = Delay::new();
 
     //let epd = create_epd_driver(&peripherals, &delay)?;
 
-    println!("Hello world!");
     delay.delay(500.millis());
 
     // Use "exit" button to wake up
     let wakeup_pin: AnyPin = peripherals.GPIO1.degrade();
     let sleep_time: Duration = Duration::from_secs(5);
 
-    let mut cfg = RtcSleepConfig::deep();
-    cfg.set_rtc_fastmem_pd_en(false);
-    let wakeup_source = TimerWakeupSource::new(sleep_time);
-    let mut rtc = Rtc::new(peripherals.LPWR);
-    rtc.rwdt.enable();
+    //let mut cfg = RtcSleepConfig::deep();
+    //cfg.set_rtc_fastmem_pd_en(false);
+    //let wakeup_source = TimerWakeupSource::new(sleep_time);
+    //let mut rtc = Rtc::new(peripherals.LPWR);
+    //rtc.rwdt.enable();
 
     delay.delay(500.millis());
 
-    rtc.sleep(&cfg, &[&wakeup_source]);
+    //rtc.sleep(&cfg, &[&wakeup_source]);
 
     loop {}
 }
+
 
 /*
 fn create_epd_driver(peripherals: &Peripherals, delay: &Delay) -> Result<(EpdDriver), MyError> {

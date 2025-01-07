@@ -1,12 +1,22 @@
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --monitor"
+# https://github.com/esp-rs/espflash
+runner = "espflash flash --monitor --bootloader kukkuu/build/bootloader/bootloader.bin --partition-table partition-table.bin"
+# https://probe.rs/
+#runner = "probe-rs run --chip esp32s3"
 
 [build]
 rustflags = [
   "-C", "link-arg=-nostartfiles",
+  
+  "-C", "link-arg=-Tlinker.lf",  # Use the custom linker script
+  "-C", "debuginfo=2",
 ]
+
+#rustflags = [ "--cfg",  "espidf_time64"] 
+# Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
 
 target = "xtensa-esp32s3-none-elf"
 
 [unstable]
-build-std = ["core"]
+#build-std = ["core"]
+build-std = ["core", "alloc", "panic_abort"]
