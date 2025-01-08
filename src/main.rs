@@ -1,25 +1,5 @@
-#![no_std]
-#![no_main]
-
 use core::time::Duration;
 
-use esp_alloc as _;
-use esp_backtrace as _;
-use esp_println::println;
-
-use esp_hal::rtc_cntl::Rtc;
-use esp_hal::{
-    clock::CpuClock,
-    delay::Delay,
-    gpio::{AnyPin, Input, Level, OutputOpenDrain, OutputPin, Pin, Pull},
-    i2c::master::I2c,
-    init,
-    peripherals::Peripherals,
-    prelude::*,
-    rtc_cntl::sleep::{self, RtcSleepConfig, TimerWakeupSource},
-    spi::master::Spi,
-    spi::SpiMode,
-};
 
 use epd_waveshare::{color::*, graphics::VarDisplay};
 use epd_waveshare::{epd2in9::*, prelude::*};
@@ -31,24 +11,24 @@ use embedded_graphics::{
 };
 
 
-#[derive(Debug)]
-pub enum MyError {
-    GpioError,
-    SpiError,
-    OtherError,
+
+
+fn main() {
+    // It is necessary to call this function once. Otherwise some patches to the runtime
+    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
+    esp_idf_svc::sys::link_patches();
+
+    // Bind the log crate to the ESP Logging facilities
+    esp_idf_svc::log::EspLogger::initialize_default();
+
+    log::info!("Hello, world!");
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct FloatMeasurement {
-    /// The measurred temperature in degree Celsius (°C).
-    pub temperature: f32,
-    /// The measured relative humidity in percent (%).
-    pub humidity: f32,
-}
 
-#[entry]
-fn main() -> ! {
-    println!("Hello world!");
+
+
+
+fn main_k() -> ! {
     //println!("wakeup: {:?}", esp_hal::reset::wakeup_cause());
 
     // Initialize with the highest possible frequency for this chip

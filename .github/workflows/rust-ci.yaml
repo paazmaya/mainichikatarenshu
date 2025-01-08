@@ -1,31 +1,45 @@
-name: Run test build with esp-idf-rust image from DockerHub
+name: Continuous Integration
 
-on: workflow_dispatch
+on:
+  push:
+    paths-ignore:
+      - "**/README.md"
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  build:
-
+  rust-checks:
+    name: Rust Checks
     runs-on: ubuntu-latest
-
+    strategy:
+      fail-fast: false
+      matrix:
+        action:
+          - command: build
+            args: --release
+          - command: fmt
+            args: --all -- --check --color always
+          - command: clippy
+            args: --all-targets --all-features --workspace -- -D warnings
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
-
-    - name: Use stable Rust
-      run: rustup default stable
-
-    - name: Install espup
-      run: cargo install espup
-
-    - name: Build
-      run: cargo +esp build --release
-    
-    - name: Archive binaries
-      run: |
-        mkdir binaries
-        cp build/*.bin build/bootloader/*.bin build/partition_table/*.bin support/esptool/* binaries/
-    - name: Archive artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: binaries
-        path: binaries
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: true
+      - name: Enable caching
+        uses: Swatinem/rust-cache@v2
+      - name: Run command
+        run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
+      - name: Archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: binaries
