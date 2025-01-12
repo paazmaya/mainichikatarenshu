@@ -1,5 +1,6 @@
 [build]
 target = "xtensa-esp32s3-espidf"
+# ESP32-S3-WROOM-1-N8R8
 
 [target.xtensa-esp32s3-espidf]
 linker = "ldproxy"
@@ -10,12 +11,19 @@ runner = "espflash flash --monitor"
 
 rustflags = [
   # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
-  "--cfg",  "espidf_time64"
+  "--cfg",  "espidf_time64",
+
+"-C", "default-linker-libraries"
 ]
 
 [unstable]
+# Required for std support. Rust does not provide std libraries for ESP32 targets since they are tier-2/-3.
 build-std = ["std", "panic_abort"]
 
 [env]
 MCU="esp32s3"
-ESP_IDF_VERSION = "v5.4.0"
+
+#IDF_PATH = "C:/Espressif/frameworks/esp-idf-v5.4"
+# https://github.com/espressif/esp-idf/tags
+ESP_IDF_VERSION = "v5.4"
+#ESP_IDF_TOOLS_INSTALL_DIR = { value = "global" } # so that this project won't contain another copy of the ESP IDF

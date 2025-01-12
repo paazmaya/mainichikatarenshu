@@ -13,7 +13,7 @@ The display will shutdown at 23:00 EET, which will record the kata either incomp
 The knowledge of the kata being confirmed or not, will be send to Google Drive, to store the information in a spreadsheet. The columns date, kata name, confirmed (boolean), time of confirmation.
 
 ```sh
-cargo install espup # Get ESP tooling handler
+cargo install espup@0.11.0 # Get ESP tooling handler, version that still works in Windows: could not be opened: LoadLibraryExW failed
 espup install # Install ESP tools
 ```
 
@@ -241,15 +241,139 @@ Use menuconfig to set the partion table file as `CONFIG_PARTITION_TABLE_CUSTOM_F
 
 Ok, the bootloader and partition table flashing needs to be done via `idf.py`, and the resulted bootloader used when application is flashed via `espflash`.
 
+Uh, there was nothing coming in the final binary, in both release and dev  profiles it was the same, no debug symbols.
+
+Went forward by using the [esp-idf-template](https://github.com/esp-rs/esp-idf-template), but that had immediately problems linking:
+
+```
+error: linking with `ldproxy` failed: exit code: 101
+  = note: [ldproxy] Running ldproxy
+          thread 'main' panicked at C:\Users\Jukka\.cargo\registry\src\index.crates.io-6f17d22bba15001f\ldproxy-0.3.4\src/main.rs:44:13:
+          Cannot locate argument '--ldproxy-linker <linker>'
+          stack backtrace:
+          note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+```
+
+Finally this was solved by having a `build.rs` file with the contents:
+
+```rust
+fn main() {
+    embuild::espidf::sysenv::output();
+}
+```
+
+Now that the build is passing, checking to see what kind of symbols there are:
+
+```
+xtensa-esp32-elf-readelf -S .\target\xtensa-esp32s3-espidf\release\mainichikatarenshu
+There are 37 section headers, starting at offset 0x566f34:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .rtc.text         PROGBITS        600fe000 06c000 000100 00  AX  0   0  4
+  [ 2] .rtc.force_fast   PROGBITS        600fe100 06c100 000020 00  WA  0   0  4
+  [ 3] .rtc_noinit       PROGBITS        50000000 06c120 000000 00   W  0   0  1
+  [ 4] .rtc.force_slow   PROGBITS        50000000 06c120 000000 00   W  0   0  1
+  [ 5] .rtc_reserved     NOBITS          600fffe8 06cfe8 000018 00  WA  0   0  8
+  [ 6] .iram0.vectors    PROGBITS        40374000 01f000 000403 00  AX  0   0  4
+  [ 7] .iram0.text       PROGBITS        40374404 01f404 00dd03 00  AX  0   0  4
+  [ 8] .dram0.dummy      NOBITS          3fc88000 012000 00a200 00  WA  0   0  1
+  [ 9] .dram0.data       PROGBITS        3fc92200 01c200 002954 00  WA  0   0 16
+  [10] .noinit           NOBITS          3fc94b54 000000 000000 00  WA  0   0  1
+  [11] .dram0.bss        NOBITS          3fc94b58 01eb54 000990 00  WA  0   0  8
+  [12] .flash.text       PROGBITS        42000020 02e020 03de38 00  AX  0   0  4
+  [13] .flash_rodat[...] NOBITS          3c000020 001020 040000 00  WA  0   0  1
+  [14] .flash.appdesc    PROGBITS        3c040020 001020 000100 00   A  0   0 16
+  [15] .flash.rodata     PROGBITS        3c040120 001120 0103a8 00  WA  0   0 16
+  [16] .ext_ram.dummy    NOBITS          3c000020 001020 05ffe0 00  WA  0   0  1
+  [17] .iram0.text_end   NOBITS          40382107 02d107 0000f9 00  WA  0   0  1
+  [18] .iram0.data       PROGBITS        40382200 06c120 000000 00   W  0   0  1
+  [19] .iram0.bss        PROGBITS        40382200 06c120 000000 00   W  0   0  1
+  [20] .dram0.heap_start PROGBITS        3fc954e8 06c120 000000 00   W  0   0  1
+  [21] .debug_aranges    PROGBITS        00000000 06c120 007688 00      0   0  8
+  [22] .debug_info       PROGBITS        00000000 0737a8 1e52b6 00      0   0  1
+  [23] .debug_abbrev     PROGBITS        00000000 258a5e 02c1ef 00      0   0  1
+  [24] .debug_line       PROGBITS        00000000 284c4d 11285f 00      0   0  1
+  [25] .debug_frame      PROGBITS        00000000 3974ac 00cba0 00      0   0  4
+  [26] .debug_str        PROGBITS        00000000 3a404c 10920e 01  MS  0   0  1
+  [27] .debug_loc        PROGBITS        00000000 4ad25a 0518f6 00      0   0  1
+  [28] .debug_ranges     PROGBITS        00000000 4feb50 02bc40 00      0   0  8
+  [29] .debug_line_str   PROGBITS        00000000 52a790 001a9d 01  MS  0   0  1
+  [30] .debug_loclists   PROGBITS        00000000 52c22d 00a6d6 00      0   0  1
+  [31] .debug_rnglists   PROGBITS        00000000 536903 000240 00      0   0  1
+  [32] .comment          PROGBITS        00000000 536b43 000093 01  MS  0   0  1
+  [33] .xtensa.info      NOTE            00000000 536bd6 000038 00      0   0  1
+  [34] .symtab           SYMTAB          00000000 536c10 013a80 10     35 1988  4
+  [35] .strtab           STRTAB          00000000 54a690 01c6cc 00      0   0  1
+  [36] .shstrtab         STRTAB          00000000 566d5c 0001d7 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+```
+
+```
+xtensa-esp32-elf-readelf -S .\target\xtensa-esp32s3-espidf\debug\mainichikatarenshu
+There are 37 section headers, starting at offset 0x10c2050:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .rtc.text         PROGBITS        600fe000 120000 000100 00  AX  0   0  4
+  [ 2] .rtc.force_fast   PROGBITS        600fe100 120100 000020 00  WA  0   0  4
+  [ 3] .rtc_noinit       PROGBITS        50000000 120120 000000 00   W  0   0  1
+  [ 4] .rtc.force_slow   PROGBITS        50000000 120120 000000 00   W  0   0  1
+  [ 5] .rtc_reserved     NOBITS          600fffe8 120fe8 000018 00  WA  0   0  8
+  [ 6] .iram0.vectors    PROGBITS        40374000 034000 000403 00  AX  0   0  4
+  [ 7] .iram0.text       PROGBITS        40374404 034404 00f527 00  AX  0   0  4
+  [ 8] .dram0.dummy      NOBITS          3fc88000 025000 00ba00 00  WA  0   0  1
+  [ 9] .dram0.data       PROGBITS        3fc93a00 030a00 002b9c 00  WA  0   0 16
+  [10] .noinit           NOBITS          3fc9659c 000000 000000 00  WA  0   0  1
+  [11] .dram0.bss        NOBITS          3fc965a0 03359c 0009e0 00  WA  0   0  8
+  [12] .flash.text       PROGBITS        42000020 044020 0dbf46 00  AX  0   0  4
+  [13] .flash_rodat[...] NOBITS          3c000020 001020 0e0000 00  WA  0   0  1
+  [14] .flash.appdesc    PROGBITS        3c0e0020 001020 000100 00   A  0   0 16
+  [15] .flash.rodata     PROGBITS        3c0e0120 001120 023480 00  WA  0   0 16
+  [16] .ext_ram.dummy    NOBITS          3c000020 001020 10ffe0 00  WA  0   0  1
+  [17] .iram0.text_end   NOBITS          4038392b 04392b 0000d5 00  WA  0   0  1
+  [18] .iram0.data       PROGBITS        40383a00 120120 000000 00   W  0   0  1
+  [19] .iram0.bss        PROGBITS        40383a00 120120 000000 00   W  0   0  1
+  [20] .dram0.heap_start PROGBITS        3fc96f80 120120 000000 00   W  0   0  1
+  [21] .debug_aranges    PROGBITS        00000000 120120 031e40 00      0   0  8
+  [22] .debug_info       PROGBITS        00000000 151f60 5f371d 00      0   0  1
+  [23] .debug_abbrev     PROGBITS        00000000 74567d 03cc90 00      0   0  1
+  [24] .debug_line       PROGBITS        00000000 78230d 22eaa0 00      0   0  1
+  [25] .debug_frame      PROGBITS        00000000 9b0db0 00f3e8 00      0   0  4
+  [26] .debug_str        PROGBITS        00000000 9c0198 52e7b4 01  MS  0   0  1
+  [27] .debug_loc        PROGBITS        00000000 eee94c 071c80 00      0   0  1
+  [28] .debug_ranges     PROGBITS        00000000 f605d0 0600d8 00      0   0  8
+  [29] .debug_line_str   PROGBITS        00000000 fc06a8 001a9d 01  MS  0   0  1
+  [30] .debug_loclists   PROGBITS        00000000 fc2145 00a6d6 00      0   0  1
+  [31] .debug_rnglists   PROGBITS        00000000 fcc81b 000240 00      0   0  1
+  [32] .comment          PROGBITS        00000000 fcca5b 000093 01  MS  0   0  1
+  [33] .xtensa.info      NOTE            00000000 fccaee 000038 00      0   0  1
+  [34] .symtab           SYMTAB          00000000 fccb28 032100 10     35 2614  4
+  [35] .strtab           STRTAB          00000000 ffec28 0c3251 00      0   0  1
+  [36] .shstrtab         STRTAB          00000000 10c1e79 0001d7 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+```
+
+Same for both.
+
+
 
 ## License
 
 MIT
 
-
-# mainichi
-
 ## Dev Containers
+
 This repository offers Dev Containers supports for:
 -  [VS Code Dev Containers](https://code.visualstudio.com/docs/remote/containers#_quick-start-open-an-existing-folder-in-a-container)
 -  [GitHub Codespaces](https://docs.github.com/en/codespaces/developing-in-codespaces/creating-a-codespace)
@@ -266,51 +390,10 @@ be achived, see [.devcontainer.json reference](https://code.visualstudio.com/doc
 
 When using Dev Containers, some tooling to facilitate building, flashing and
 simulating in Wokwi is also added.
-### Build
-- Terminal approach:
 
-    ```
-    scripts/build.sh  [debug | release]
-    ```
-    > If no argument is passed, `release` will be used as default
+## Wokwi Simulation
 
-
--  UI approach:
-
-    The default build task is already set to build the project, and it can be used
-    in VS Code and GitHub Codespaces:
-    - From the [Command Palette](https://code.visualstudio.com/docs/getstarted/userinterface#_command-palette) (`Ctrl-Shift-P` or `Cmd-Shift-P`) run the `Tasks: Run Build Task` command.
-    - `Terminal`-> `Run Build Task` in the menu.
-    - With `Ctrl-Shift-B` or `Cmd-Shift-B`.
-    - From the [Command Palette](https://code.visualstudio.com/docs/getstarted/userinterface#_command-palette) (`Ctrl-Shift-P` or `Cmd-Shift-P`) run the `Tasks: Run Task` command and
-    select `Build`.
-    - From UI: Press `Build` on the left side of the Status Bar.
-
-### Flash
-
-> **Note**
->
-> When using GitHub Codespaces, we need to make the ports
-> public, [see instructions](https://docs.github.com/en/codespaces/developing-in-codespaces/forwarding-ports-in-your-codespace#sharing-a-port).
-
-- Terminal approach:
-  - Using `flash.sh` script:
-
-    ```
-    scripts/flash.sh [debug | release]
-    ```
-    > If no argument is passed, `release` will be used as default
-
-- UI approach:
-    - From the [Command Palette](https://code.visualstudio.com/docs/getstarted/userinterface#_command-palette) (`Ctrl-Shift-P` or `Cmd-Shift-P`) run the `Tasks: Run Task` command and
-    select `Build & Flash`.
-    - From UI: Press `Build & Flash` on the left side of the Status Bar.
-- Any alternative flashing method from host machine.
-
-
-### Wokwi Simulation
-
-#### VS Code Dev Containers and GitHub Codespaces
+### VS Code Dev Containers and GitHub Codespaces
 
 The Dev Container includes the Wokwi Vs Code installed, hence you can simulate your built projects doing the following:
 1. Press `F1`

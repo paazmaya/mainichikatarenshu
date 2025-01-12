@@ -18,11 +18,17 @@ default = []
 experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
-log = "0.4"
-esp-idf-svc = { version = "0.50", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+log = "0.4.0"
+anyhow = "1.0.0"
 
-#embedded-graphics = "0.8"
-#epd-waveshare = "0.6.0"
+# https://github.com/esp-rs/esp-idf-svc
+esp-idf-svc = { version = "0.50.0", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+
+embedded-graphics = "0.8.0"
+embedded-hal = "1.0.0"
+
+# https://github.com/caemor/epd-waveshare
+epd-waveshare = "0.6.0"
 
 [build-dependencies]
 embuild = "0.33"

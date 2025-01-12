@@ -1,19 +1,36 @@
 use core::time::Duration;
+use std::{thread, time};
 
+use anyhow::{Error, Ok};
 
-use epd_waveshare::{color::*, graphics::VarDisplay};
-use epd_waveshare::{epd2in9::*, prelude::*};
+use epd_waveshare::{
+    color,
+    epd2in9::{Display2in9, Epd2in9, HEIGHT, WIDTH},
+    graphics::DisplayRotation,
+    prelude::*,
+};
 
 use embedded_graphics::{
     pixelcolor::BinaryColor::On as Black,
     prelude::*,
     primitives::{Line, PrimitiveStyle},
 };
+use embedded_graphics::{
+    mono_font::MonoTextStyleBuilder,
+    prelude::*,
+    primitives::{Circle, PrimitiveStyleBuilder},
+    text::{Baseline, Text, TextStyleBuilder},
+};
+use esp_idf_svc::hal::{delay::Delay, gpio::{AnyIOPin, Pin}, spi::{config::DriverConfig, Dma, SpiDriver}};
+use esp_idf_svc::hal::gpio::{IOPin, InputPin, OutputPin};
+use esp_idf_svc::hal::spi::SpiDeviceDriver;
+use esp_idf_svc::{
+    hal::peripherals::Peripherals
+};
+use esp_idf_svc::hal::gpio::PinDriver;
 
-
-
-
-fn main() {
+// https://docs.esp-rs.org/esp-idf-svc/esp_idf_svc/
+fn main() -> anyhow::Result<()> {
     // It is necessary to call this function once. Otherwise some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
     esp_idf_svc::sys::link_patches();
@@ -22,12 +39,60 @@ fn main() {
     esp_idf_svc::log::EspLogger::initialize_default();
 
     log::info!("Hello, world!");
+
+    let peripherals = Peripherals::take().expect("Could not take peripherals");
+    
+    let mut delay = Delay::default();
+
+    // Pins on the ESP32S3 that are connected to E-paper
+    let sclk = peripherals.pins.gpio12.downgrade();
+    let cs = peripherals.pins.gpio45.into();
+    let mosi = peripherals.pins.gpio11.downgrade_output();
+
+    let busy = PinDriver::input(peripherals.pins.gpio48).expect("Could not set pin as input");
+    let dc = PinDriver::output(peripherals.pins.gpio46).expect("Could not set pin as input");
+    let rst = PinDriver::output(peripherals.pins.gpio47).expect("Could not set pin as input");
+
+    let dma = Dma::Auto(4096);
+    let spi = SpiDriver::new(
+        peripherals.spi2,
+        sclk, // Pass the sclk pin directly
+        mosi,
+        AnyIOPin::none(),
+        &DriverConfig::default().dma(dma),
+    )?;
+
+    let mut spi_device = SpiDeviceDriver::new(spi, cs, &Default::default())?;
+
+    let mut epd = Epd2in9::new(&mut spi_device, busy, dc, rst, &mut delay, None)?;
+    log::info!("epd setup completed");
+
+    let mut display = Display2in9::default();
+    display.clear(color::Color::White).expect("Could not clear display");
+
+    let wakeup_reason = esp_idf_svc::hal::reset::WakeupReason::get();
+    log::info!("Wakeup reason: {:?}", wakeup_reason);
+
+    let reset_reason = esp_idf_svc::hal::reset::ResetReason::get();
+    log::info!("Reset reason: {:?}", reset_reason);
+
+    thread::sleep(time::Duration::from_millis(1000));
+
+    let sleep_micros = 2_000_000;
+    unsafe {
+        esp_idf_svc::sys::esp_sleep_enable_timer_wakeup(sleep_micros);
+
+        log::info!("Going to deep sleep {} seconds", sleep_micros / 1_000_000);
+        esp_idf_svc::sys::esp_deep_sleep_start();
+        // Software reset!
+    }
+    Ok(())
 }
 
 
 
 
-
+/*
 fn main_k() -> ! {
     //println!("wakeup: {:?}", esp_hal::reset::wakeup_cause());
 
@@ -63,49 +128,37 @@ fn main_k() -> ! {
 
     loop {}
 }
+*/
 
 
+// External buttons and their GPIO pin numbers
+const BTN_EXIT: u8 = 1;
+const BTN_MENU: u8 = 2;
+const BTN_UP: u8 = 6;
+const BTN_DOWN: u8 = 4;
+const BTN_CONF: u8 = 5;
+const BTN_RESET: u8 = 3;
+
+// Other useful pins
+const PIN_POWER_LED: u8 = 41;
+
+// TF card pins
+const TFC_CS: u8 = 10;
+const TFC_MOSI: u8 = 40;
+const TFC_MISO: u8 = 13;
+const TFC_CLK: u8 = 39;
 /*
-fn create_epd_driver(peripherals: &Peripherals, delay: &Delay) -> Result<(EpdDriver), MyError> {
-
-    // SCLK (Clock) – Line for the clock signal.
-    let sclk = peripherals.GPIO12.degrade();
-    // SS/CS (Slave Select/Chip Select) – Line for the master to select which slave to send data to.
-    let cs:AnyPin = peripherals.GPIO45.degrade();
-    // MOSI (Master Output/Slave Input) – Line for the master to send data to the slave.
-    let mosi:AnyPin = peripherals.GPIO11.degrade();
-
-    // 10.MHz()
-    let mut spi = Spi::new(
-        peripherals.SPI2,
-    )
-    .with_sck(sclk)
-    .with_mosi(mosi)
-    .with_cs(cs);
-
-    println!("driver setup completed");
-
-    // SPI: SpiDevice,
-    // BUSY: InputPin, An output from the display, if LOW then the display is busy and cannot accept data.
-    let busy = peripherals.GPIO48.degrade();
-    // DC: OutputPin, Data/Command input. If held HIGH then the SPI bus is sending data, if LOW then it is sending command signals.
-    let dc = OutputPin::new(peripherals.GPIO46, Level::Low, OutputOpenDrain, Pull::Up).expect("Failed to configure DC pin");
-    // RST: OutputPin, External Reset, send this pin LOW to reset the display.
-    let rst = OutputPin::new(peripherals.GPIO47, Level::Low, OutputOpenDrain, Pull::Up).expect("Failed to configure RST pin");
-
-    let mut epd = Epd2in9::new(&mut spi, busy, dc, rst, &mut delay, None)?;
-
-    // Use display graphics from embedded-graphics
-    let mut display = Display2in9::default();
-
-    println!("epd setup completed");
-
-    Ok(epd_driver)
+// Go look at
+// https://github.com/esp-rs/esp-idf-svc/blob/master/examples/sd_spi.rs
+fn connect_to_sdcard((peripherals: &Peripherals) -> ! {
+    let cs = peripherals.pins.gpio10;
 }
+*/
+
 
 /// Retuns the size of a buffer necessary to hold the entire image
 pub fn get_buffer_size() -> usize {
     // The height is multiplied by 2 because the red pixels essentially exist on a separate "layer"
     epd_waveshare::buffer_len(WIDTH as usize, HEIGHT as usize * 2)
 }
-*/
+
