@@ -22,7 +22,7 @@ log = "0.4.0"
 anyhow = "1.0.0"
 
 # https://github.com/esp-rs/esp-idf-svc
-esp-idf-svc = { version = "0.50.0", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+esp-idf-svc = { version = "0.51.0", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 
 embedded-graphics = "0.8.0"
 embedded-hal = "1.0.0"
