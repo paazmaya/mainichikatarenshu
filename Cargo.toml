@@ -24,11 +24,14 @@ anyhow = "1.0.95"
 # https://github.com/esp-rs/esp-idf-svc
 esp-idf-svc = { version = "0.50.1", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
 
+# https://github.com/embedded-graphics/embedded-graphics
 embedded-graphics = "0.8.1"
+
+# https://github.com/rust-embedded/embedded-hal
 embedded-hal = "1.0.0"
 
 # https://github.com/caemor/epd-waveshare
-epd-waveshare = "0.6.0"
+epd-waveshare = "0.5.0"
 
 [build-dependencies]
 embuild = "0.33"
