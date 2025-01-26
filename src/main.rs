@@ -1,57 +1,27 @@
-use core::time::Duration;
-use std::{thread, time};
+use anyhow::Ok;
 
-use anyhow::{Error, Ok};
-
-use epd_waveshare::{
-    color::{self, Color},
-    epd2in9::{Display2in9, Epd2in9, DEFAULT_BACKGROUND_COLOR, HEIGHT, WIDTH},
-    graphics::{DisplayRotation, VarDisplay},
-    prelude::*,
+use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::primitives::Line;
+use embedded_graphics::primitives::PrimitiveStyle;
+use embedded_graphics::text::Alignment;
+use embedded_graphics::text::TextStyleBuilder;
+use embedded_graphics::{prelude::*, text::Text};
+use ssd1680::color::Black;
+use ssd1680::prelude::*;
+// https://docs.rs/embedded-graphics/0.8.1/embedded_graphics/mono_font/index.html#modules
+use embedded_graphics::mono_font::{
+    iso_8859_15::FONT_10X20 as ISO15_10, jis_x0201::FONT_9X15 as JIS_9, MonoTextStyle,
+    MonoTextStyleBuilder,
 };
 
-use embedded_graphics::{
-    mono_font::MonoTextStyleBuilder,
-    prelude::*,
-    primitives::{Circle, PrimitiveStyleBuilder},
-    text::{Baseline, Text, TextStyleBuilder},
-};
-use embedded_graphics::{
-    pixelcolor::BinaryColor::On as Black,
-    prelude::*,
-    primitives::{Line, PrimitiveStyle},
-};
-
-use embedded_graphics::mono_font::{ascii::FONT_10X20, MonoTextStyle};
-
-use esp_idf_svc::hal::gpio::PinDriver;
-use esp_idf_svc::hal::gpio::{IOPin, InputPin, OutputPin};
+use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::hal::spi::SpiDeviceDriver;
-use esp_idf_svc::hal::{
-    delay::Delay,
-    gpio::{AnyIOPin, Pin},
-    spi::{config::DriverConfig, Dma, SpiDriver},
-};
 
-use esp_idf_svc::sys::EspError;
-
-use esp_idf_svc::hal::adc;
-use esp_idf_svc::hal::delay;
 use esp_idf_svc::hal::gpio;
-use esp_idf_svc::hal::i2c;
 use esp_idf_svc::hal::peripheral;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::spi;
-
-use esp_idf_svc::eventloop::*;
-use esp_idf_svc::ipv4;
-use esp_idf_svc::mqtt::client::*;
-use esp_idf_svc::ping;
-use esp_idf_svc::sntp;
-use esp_idf_svc::systime::EspSystemTime;
-use esp_idf_svc::timer::*;
-use esp_idf_svc::wifi::*;
 
 // https://docs.esp-rs.org/esp-idf-svc/esp_idf_svc/
 fn main() -> anyhow::Result<()> {
@@ -67,29 +37,7 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().expect("Could not take peripherals");
     let pins = peripherals.pins;
 
-    let mut delay = Delay::default();
-
-    // Pins on the ESP32S3 that are connected to E-paper
-    /*
-        let sclk = peripherals.pins.gpio12.downgrade();
-        let cs = peripherals.pins.gpio45.into();
-        let mosi = peripherals.pins.gpio11.downgrade_output();
-
-        let busy = PinDriver::input(peripherals.pins.gpio48).expect("Could not set pin as input");
-        let dc = PinDriver::output(peripherals.pins.gpio46).expect("Could not set pin as input");
-        let rst = PinDriver::output(peripherals.pins.gpio47).expect("Could not set pin as input");
-    */
-    /*
-    let dma = Dma::Auto(4096);
-    let spi = SpiDriver::new(
-        peripherals.spi2,
-        sclk, // Pass the sclk pin directly
-        mosi,
-        AnyIOPin::none(),
-        &DriverConfig::default().dma(dma),
-    )?;
-    */
-
+    // Pins on the ESP32S3 that are connected to E-paper display
     waveshare_epd_hello_world(
         peripherals.spi2,
         pins.gpio12.into(),
@@ -98,17 +46,9 @@ fn main() -> anyhow::Result<()> {
         pins.gpio48.into(),
         pins.gpio46.into(),
         pins.gpio47.into(),
-    )?;
+    )
+    .expect("Failed to initialize Waveshare e-paper display");
 
-    /*
-        let mut spi_device = SpiDeviceDriver::new(spi, cs, &Default::default())?;
-
-        let mut epd = Epd2in9::new(&mut spi_device, busy, dc, rst, &mut delay, None)?;
-        log::info!("epd setup completed");
-
-        let mut display = Display2in9::default();
-        display.clear(color::Color::White).expect("Could not clear display");
-    */
     let wakeup_reason = esp_idf_svc::hal::reset::WakeupReason::get();
     log::info!("Wakeup reason: {:?}", wakeup_reason);
 
@@ -193,12 +133,6 @@ fn connect_to_sdcard((peripherals: &Peripherals) -> ! {
 }
 */
 
-/// Retuns the size of a buffer necessary to hold the entire image
-pub fn get_buffer_size() -> usize {
-    // The height is multiplied by 2 because the red pixels essentially exist on a separate "layer"
-    epd_waveshare::buffer_len(WIDTH as usize, HEIGHT as usize * 2)
-}
-
 fn waveshare_epd_hello_world(
     spi: impl peripheral::Peripheral<P = impl spi::SpiAnyPins> + 'static,
     sclk: gpio::AnyOutputPin,
@@ -222,46 +156,116 @@ fn waveshare_epd_hello_world(
     .expect("Could not create SPI device driver");
     let mut delay = Delay::default();
 
-    // Setup EPD
-    let mut epd = Epd2in9::new(
+    let mut ssd1680 = Ssd1680::new(
         &mut driver,
-        gpio::PinDriver::input(busy_in)?,
-        gpio::PinDriver::output(dc)?,
-        gpio::PinDriver::output(rst)?,
+        gpio::PinDriver::input(busy_in).expect("Failed to set busy pin as input"),
+        gpio::PinDriver::output(dc).expect("Failed to set dc pin as output"),
+        gpio::PinDriver::output(rst).expect("Failed to set rst pin as output"),
         &mut delay,
-        None
     )
     .expect("Could not create EPD driver");
+    ssd1680.init(&mut delay).expect("Failed to initialize display");
 
-    // Two ways of making the display
-    let mut display = Display2in9::default();
+    // Clear frames on the display driver
+    ssd1680
+        .clear_red_frame()
+        .expect("Failed to clear red frame");
+    ssd1680
+        .clear_bw_frame()
+        .expect("Failed to clear black and white frame");
 
-    // Use display graphics from embedded-graphics
-    //let mut buffer = vec![DEFAULT_BACKGROUND_COLOR.get_byte_value(); WIDTH as usize / 8 * HEIGHT as usize];
-    //let mut display = VarDisplay::new(WIDTH, HEIGHT, &mut buffer, false).expect("Could not create display");
-    display.set_rotation(DisplayRotation::Rotate90);
-    //display.clear_buffer(DEFAULT_BACKGROUND_COLOR); // 0.5.0
-    display.clear(DEFAULT_BACKGROUND_COLOR); // 0.6.0
+    // Create buffer for black and white
+    let mut display = Display2in13::bw();
 
-    // Write "Hello, world!" to the screen
-    //epd.clear_frame(&mut driver, &mut delay);
+    display
+        .clear(BinaryColor::Off)
+        .expect("Failed to clear display");
 
-    // Two ways to crate style
-    let style1 = MonoTextStyle::new(&FONT_10X20, Color::Black);
+    draw_rotation_and_rulers(&mut display);
+
+    // Two ways to create style
+    let style1 = MonoTextStyle::new(&ISO15_10, BinaryColor::On);
     let style2 = MonoTextStyleBuilder::new()
-        .font(&FONT_10X20)
-        .text_color(Color::Black)
-        .background_color(Color::White)
+        .font(&ISO15_10)
+        .text_color(BinaryColor::On)
+        .background_color(BinaryColor::Off)
         .build();
-    let text = Text::new("Hello, world!", Point::new(10, 10), style1);
-    text.draw(&mut display)?;
+    let text = Text::new("Hei senkin tonttu, yritä nyt...", Point::new(4, 10), style1);
+    text.draw(&mut display).expect("Failed to draw text");
 
     // Create a text at position (20, 30) and draw it using the previously defined style
-    Text::new("Hello Rust!", Point::new(20, 30), style2).draw(&mut display)?;
+    Text::new("...saada tämä toiminmanhan", Point::new(4, 36), style2)
+        .draw(&mut display)
+        .expect("Failed to draw text");
+
+    let style3 = MonoTextStyleBuilder::new()
+        .font(&JIS_9)
+        .text_color(BinaryColor::On)
+        .background_color(BinaryColor::Off)
+        .build();
+    Text::new(
+        // Japanese text katakana only
+        "カタカナ",
+        Point::new(4, 60),
+        style3,
+    )
+    .draw(&mut display)
+    .expect("Failed to katakana draw text");
 
     // Display updated frame
-    epd.update_frame(&mut driver, &display.buffer(), &mut delay)?;
-    epd.display_frame(&mut driver, &mut delay)?;
+    log::info!("Send bw frame to display");
+    ssd1680
+        .update_bw_frame(&display.buffer())
+        .expect("Failed to update black and white frame");
+    ssd1680
+        .display_frame(&mut delay)
+        .expect("Failed to display frame");
 
     Ok(())
+}
+
+fn draw_rotation_and_rulers(display: &mut Display2in13) {
+    display.set_rotation(DisplayRotation::Rotate0);
+    draw_text(display, "rotation 0", 50, 35);
+    draw_ruler(display);
+
+    display.set_rotation(DisplayRotation::Rotate90);
+    draw_text(display, "rotation 90", 50, 35);
+    draw_ruler(display);
+
+    display.set_rotation(DisplayRotation::Rotate180);
+    draw_text(display, "rotation 180", 50, 35);
+    draw_ruler(display);
+
+    display.set_rotation(DisplayRotation::Rotate270);
+    draw_text(display, "rotation 270", 50, 35);
+    draw_ruler(display);
+}
+
+
+fn draw_ruler(display: &mut Display2in13) {
+    for col in 1..ssd1680::WIDTH {
+        if col % 25 == 0 {
+            Line::new(Point::new(col as i32, 0), Point::new(col as i32, 10))
+                .into_styled(PrimitiveStyle::with_stroke(Black, 1))
+                .draw(display)
+                .unwrap();
+        }
+
+        if col % 50 == 0 {
+            let label = col.to_string();
+            draw_text(display, &label, col as i32, 20);
+        }
+    }
+}
+
+fn draw_text(display: &mut Display2in13, text: &str, x: i32, y: i32) {
+    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
+    let _ = Text::with_text_style(
+        text,
+        Point::new(x, y),
+        style,
+        TextStyleBuilder::new().alignment(Alignment::Center).build(),
+    )
+    .draw(display);
 }

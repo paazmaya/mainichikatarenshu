@@ -379,7 +379,19 @@ minilar text styling in a display created from `VarDisplay::new()` instead of `D
 That then revealed that even when the display has two colors, they should not be defined as `embedded_graphics::pixelcolor::BinaryColor:::Off`,
 but as `epd_waveshare::color::Color::White`.
 
+The text started to appear in the screen but they kept drawing om top of existing ones,
+not clearning the screen at any point.
 
+The working module was `epd_waveshare::epd2in9_v2`, but the internal commands might differ, which is why 
+other similar board configurations were tried out...
+
+The display is using a driver SSD1680, so perhaps should be looking at some other EPD provier than Waveshare crate.
+
+GitHub search revealed
+https://github.com/embedded-drivers/epd
+and 
+https://github.com/mbv/ssd1680
+to be promising ones, the latter being used at https://github.com/mbv/esp32-ssd1680/blob/main/Cargo.toml
 
 ## License
 

@@ -30,8 +30,8 @@ embedded-graphics = "0.8.1"
 # https://github.com/rust-embedded/embedded-hal
 embedded-hal = "1.0.0"
 
-# https://github.com/caemor/epd-waveshare
-epd-waveshare = { version = "0.6.0", features = ["epd2in13_v2", "graphics"], default-features = false }
+# https://github.com/mbv/ssd1680
+ssd1680 = "0.2.0"
 
 [build-dependencies]
 embuild = "0.33"
