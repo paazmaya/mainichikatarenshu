@@ -367,6 +367,19 @@ Key to Flags:
 Same for both.
 
 
+It took some time to come back to this project as the Waveshare driver and embedded graphics seemed to be
+har to get working together.
+Finally when lookig at the diff 
+https://github.com/caemor/epd-waveshare/compare/v0.5.0...v0.6.0
+and 
+https://github.com/embedded-graphics/embedded-graphics
+matcing use cases, got the build to compile with
+minilar text styling in a display created from `VarDisplay::new()` instead of `Display2in9::default()`.
+
+That then revealed that even when the display has two colors, they should not be defined as `embedded_graphics::pixelcolor::BinaryColor:::Off`,
+but as `epd_waveshare::color::Color::White`.
+
+
 
 ## License
 

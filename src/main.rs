@@ -4,9 +4,9 @@ use std::{thread, time};
 use anyhow::{Error, Ok};
 
 use epd_waveshare::{
-    color::{self, White},
-    epd2in9_v2::{Display2in9, Epd2in9, DEFAULT_BACKGROUND_COLOR, HEIGHT, WIDTH},
-    graphics::DisplayRotation,
+    color::{self, Color},
+    epd2in9::{Display2in9, Epd2in9, DEFAULT_BACKGROUND_COLOR, HEIGHT, WIDTH},
+    graphics::{DisplayRotation, VarDisplay},
     prelude::*,
 };
 
@@ -23,7 +23,6 @@ use embedded_graphics::{
 };
 
 use embedded_graphics::mono_font::{ascii::FONT_10X20, MonoTextStyle};
-use embedded_graphics::pixelcolor::*;
 
 use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::gpio::{IOPin, InputPin, OutputPin};
@@ -216,7 +215,7 @@ fn waveshare_epd_hello_world(
         sclk,
         sdo,
         Option::<gpio::AnyIOPin>::None,
-        Option::<gpio::AnyOutputPin>::None,
+        Some(cs),
         &spi::SpiDriverConfig::new().dma(spi::Dma::Disabled),
         &spi::SpiConfig::new().baudrate(26.MHz().into()),
     )
@@ -226,11 +225,11 @@ fn waveshare_epd_hello_world(
     // Setup EPD
     let mut epd = Epd2in9::new(
         &mut driver,
-        gpio::PinDriver::output(cs)?,
         gpio::PinDriver::input(busy_in)?,
         gpio::PinDriver::output(dc)?,
         gpio::PinDriver::output(rst)?,
         &mut delay,
+        None
     )
     .expect("Could not create EPD driver");
 
@@ -239,25 +238,26 @@ fn waveshare_epd_hello_world(
 
     // Use display graphics from embedded-graphics
     //let mut buffer = vec![DEFAULT_BACKGROUND_COLOR.get_byte_value(); WIDTH as usize / 8 * HEIGHT as usize];
-    //let mut display = VarDisplay::new(WIDTH, HEIGHT, &mut buffer);
+    //let mut display = VarDisplay::new(WIDTH, HEIGHT, &mut buffer, false).expect("Could not create display");
     display.set_rotation(DisplayRotation::Rotate90);
-    display.clear_buffer(DEFAULT_BACKGROUND_COLOR);
+    //display.clear_buffer(DEFAULT_BACKGROUND_COLOR); // 0.5.0
+    display.clear(DEFAULT_BACKGROUND_COLOR); // 0.6.0
 
     // Write "Hello, world!" to the screen
     //epd.clear_frame(&mut driver, &mut delay);
 
     // Two ways to crate style
-    let style1 = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
+    let style1 = MonoTextStyle::new(&FONT_10X20, Color::Black);
     let style2 = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
-        .text_color(BinaryColor::On)
-        .background_color(BinaryColor::Off)
+        .text_color(Color::Black)
+        .background_color(Color::White)
         .build();
     let text = Text::new("Hello, world!", Point::new(10, 10), style1);
-    //text.draw(&mut display)?;
+    text.draw(&mut display)?;
 
     // Create a text at position (20, 30) and draw it using the previously defined style
-    //Text::new("Hello Rust!", Point::new(20, 30), style1).draw(&mut display)?;
+    Text::new("Hello Rust!", Point::new(20, 30), style2).draw(&mut display)?;
 
     // Display updated frame
     epd.update_frame(&mut driver, &display.buffer(), &mut delay)?;
