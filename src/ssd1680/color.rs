@@ -1,14 +1,11 @@
 //! B/W Color for EPDs
 
-#[cfg(feature = "graphics")]
 use embedded_graphics::pixelcolor::BinaryColor;
 
-#[cfg(feature = "graphics")]
 pub use BinaryColor::Off as Black;
-#[cfg(feature = "graphics")]
+
 pub use BinaryColor::On as White;
-#[cfg(feature = "graphics")]
-pub use BinaryColor::On as Red;
+
 
 /// Black/White colors
 #[derive(Clone, Copy, PartialEq, Debug)]

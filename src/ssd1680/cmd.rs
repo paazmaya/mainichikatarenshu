@@ -14,7 +14,25 @@ impl Cmd {
     pub const SET_RAMX_COUNTER: u8 = 0x4E;
     pub const SET_RAMY_COUNTER: u8 = 0x4F;
     pub const WRITE_BW_DATA: u8 = 0x24;
-    pub const WRITE_RED_DATA: u8 = 0x26;
+    pub const WRITE_CLEAR_DATA: u8 = 0x26;
     pub const UPDATE_DISPLAY_CTRL2: u8 = 0x22;
     pub const MASTER_ACTIVATE: u8 = 0x20;
 }
+
+/*
+Arduino example code had these:
+0x12 - Software Reset
+0x01 - Driver Output Control
+0x11 - Data Entry Mode
+0x18 - Temperature Sensor Control
+0x3C - Border Waveform Control
+0x21 - Display Update Control
+0x22 - Display Update Sequence Control
+0x20 - Master Activation
+0x44 - Set RAM X Address Start/End
+0x45 - Set RAM Y Address Start/End
+0x4E - Set RAM X Address Counter
+0x4F - Set RAM Y Address Counter
+0x24 - Write RAM
+0x26 - Write RAM for Red
+*/

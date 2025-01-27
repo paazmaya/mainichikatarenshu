@@ -1,7 +1,7 @@
 //! Graphics Support for EPDs
 
-use crate::color::Color;
-use crate::{HEIGHT, WIDTH};
+use crate::ssd1680::color::Color;
+use crate::ssd1680::{HEIGHT, WIDTH};
 use display_interface::DisplayError;
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 
@@ -113,19 +113,9 @@ pub struct Display2in13 {
 
 impl Display2in13 {
     /// Create a black & white display buffer
-    pub fn bw() -> Self {
+    pub fn new() -> Self {
         Display2in13 {
             buffer: [Color::White.get_byte_value(); buffer_len(WIDTH as usize, HEIGHT as usize)],
-            rotation: DisplayRotation::default(),
-            is_inverted: false,
-        }
-    }
-
-    /// Create a red display buffer
-    pub fn red() -> Self {
-        Display2in13 {
-            buffer: [Color::White.inverse().get_byte_value();
-                buffer_len(WIDTH as usize, HEIGHT as usize)],
             rotation: DisplayRotation::default(),
             is_inverted: false,
         }

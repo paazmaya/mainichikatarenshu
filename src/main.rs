@@ -10,8 +10,15 @@ use embedded_graphics::text::Alignment;
 use embedded_graphics::text::TextStyleBuilder;
 use embedded_graphics::{prelude::*, text::Text};
 use esp_idf_svc::hal::gpio::IOPin;
-use ssd1680::color::{Black, Red, White};
-use ssd1680::prelude::*;
+
+mod ssd1680;
+
+use ssd1680::color::Color::{Black, White};
+
+pub use crate::ssd1680::color::Color;
+pub use crate::ssd1680::driver::Ssd1680;
+
+pub use crate::ssd1680::graphics::{Display, Display2in13, DisplayRotation};
 // https://docs.rs/embedded-graphics/0.8.1/embedded_graphics/mono_font/index.html#modules
 use embedded_graphics::mono_font::{
     iso_8859_15::FONT_10X20 as ISO15_10, jis_x0201::FONT_9X15 as JIS_9, MonoTextStyle,
@@ -35,8 +42,6 @@ fn main() -> anyhow::Result<()> {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    log::info!("Hello, world!");
-
     let peripherals = Peripherals::take().expect("Could not take peripherals");
     let pins = peripherals.pins;
 
@@ -52,6 +57,7 @@ fn main() -> anyhow::Result<()> {
         &spi::SpiConfig::new().baudrate(26.MHz().into()),
     )
     .expect("Could not create SPI device driver");
+
     let mut delay = Delay::default();
 
     let mut ssd1680 = Ssd1680::new(
@@ -63,15 +69,22 @@ fn main() -> anyhow::Result<()> {
     )
     .expect("Could not create EPD driver");
 
+    // Perform hardware reset
+    ssd1680.reset(&mut delay).expect("Failed to reset EPD");
+
+    // Initialize display
+    ssd1680.init(&mut delay).expect("Failed to initialize EPD");
+
+    // Clear frame
     ssd1680
-        .clear_red_frame()
+        .clear_frame()
         .expect("Failed to clear black and white frame");
 
     // Create buffer for black and white
-    let mut display = Display2in13::red();
-    // 128*296 is the real size of the display, while this driver gives 122*250
+    let mut display = Display2in13::new();
+    display.set_rotation(DisplayRotation::Rotate90);
 
-    draw_rotation_and_rulers(&mut display);
+    //draw_rotation_and_rulers(&mut display);
 
     log::info!("Draw text 1");
     // Two ways to create style
@@ -108,11 +121,10 @@ fn main() -> anyhow::Result<()> {
     // Display updated frame
     log::info!("Update bw frame");
     ssd1680
-        .update_red_frame(&display.buffer())
+        .update_frame(&display.buffer())
         .expect("Failed to update black and white frame");
 
     log::info!("Display frame");
-
 
     ssd1680
         .display_frame(&mut delay)
@@ -226,7 +238,7 @@ fn draw_ruler(display: &mut Display2in13) {
     for col in 1..ssd1680::WIDTH {
         if col % 25 == 0 {
             Line::new(Point::new(col as i32, 0), Point::new(col as i32, 10))
-                .into_styled(PrimitiveStyle::with_stroke(Black, 1))
+                .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
                 .draw(display)
                 .unwrap();
         }

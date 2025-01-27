@@ -5,8 +5,8 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal::spi::SpiDevice;
 
-use crate::interface::DisplayInterface;
-use crate::{cmd, color, flag, HEIGHT, WIDTH};
+use crate::ssd1680::interface::DisplayInterface;
+use crate::ssd1680::{cmd, color, flag, HEIGHT, WIDTH};
 
 /// A configured display with a hardware interface.
 pub struct Ssd1680<SPI, BSY, RST, DC> {
@@ -68,18 +68,11 @@ where
         Ok(())
     }
 
-    /// Update the whole BW buffer on the display driver
-    pub fn update_bw_frame(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
+    /// Update the whole buffer on the display driver
+    pub fn update_frame(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
         self.use_full_frame()?;
         self.interface
             .cmd_with_data(cmd::Cmd::WRITE_BW_DATA, &buffer)
-    }
-
-    /// Update the whole Red buffer on the display driver
-    pub fn update_red_frame(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
-        self.use_full_frame()?;
-        self.interface
-            .cmd_with_data(cmd::Cmd::WRITE_RED_DATA, &buffer)
     }
 
     /// Start an update of the whole display
@@ -96,26 +89,13 @@ where
     }
 
     /// Make the whole black and white frame on the display driver white
-    pub fn clear_bw_frame(&mut self) -> Result<(), DisplayError> {
+    pub fn clear_frame(&mut self) -> Result<(), DisplayError> {
         self.use_full_frame()?;
 
         // TODO: allow non-white background color
         let color = color::Color::White.get_byte_value();
 
-        self.interface.cmd(cmd::Cmd::WRITE_BW_DATA)?;
-        self.interface
-            .data_x_times(color, u32::from(WIDTH) / 8 * u32::from(HEIGHT))?;
-        Ok(())
-    }
-
-    /// Make the whole red frame on the display driver white
-    pub fn clear_red_frame(&mut self) -> Result<(), DisplayError> {
-        self.use_full_frame()?;
-
-        // TODO: allow non-white background color
-        let color = color::Color::White.inverse().get_byte_value();
-
-        self.interface.cmd(cmd::Cmd::WRITE_RED_DATA)?;
+        self.interface.cmd(cmd::Cmd::WRITE_CLEAR_DATA)?;
         self.interface
             .data_x_times(color, u32::from(WIDTH) / 8 * u32::from(HEIGHT))?;
         Ok(())

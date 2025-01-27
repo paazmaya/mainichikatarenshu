@@ -393,6 +393,10 @@ and
 https://github.com/mbv/ssd1680
 to be promising ones, the latter being used at https://github.com/mbv/esp32-ssd1680/blob/main/Cargo.toml
 
+None of the drivers seemed fit, since the commands they used were not matching the ones in Arduino examples by Elecrow
+
+
+
 ## License
 
 MIT
