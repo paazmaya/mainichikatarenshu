@@ -9,6 +9,7 @@ impl Cmd {
     pub const DISPLAY_UPDATE_CONTROL: u8 = 0x21;
     pub const SET_RAMXPOS: u8 = 0x44;
     pub const SET_RAMYPOS: u8 = 0x45;
+    pub const DEEP_SLEEP_MODE: u8 = 0x10;
 
     // Update
     pub const SET_RAMX_COUNTER: u8 = 0x4E;

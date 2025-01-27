@@ -6,7 +6,6 @@ pub use BinaryColor::Off as Black;
 
 pub use BinaryColor::On as White;
 
-
 /// Black/White colors
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {

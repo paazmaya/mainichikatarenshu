@@ -41,7 +41,7 @@ where
     pub fn init(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
         self.interface.reset(delay);
         self.interface.cmd(cmd::Cmd::SW_RESET)?;
-        self.interface.wait_until_idle(delay);
+        self.interface.wait_until_idle(delay)?;
 
         self.interface
             .cmd_with_data(cmd::Cmd::DRIVER_CONTROL, &[HEIGHT - 1, 0x00, 0x00])?;
@@ -64,7 +64,7 @@ where
 
         self.use_full_frame()?;
 
-        self.interface.wait_until_idle(delay);
+        self.interface.wait_until_idle(delay)?;
         Ok(())
     }
 
@@ -74,17 +74,32 @@ where
         self.interface
             .cmd_with_data(cmd::Cmd::WRITE_BW_DATA, &buffer)
     }
+    /// Wake up the device if it is in sleep mode
+    pub fn wake_up(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+        log::info!("Waking up the device");
+        self.interface
+            .cmd_with_data(cmd::Cmd::DEEP_SLEEP_MODE, &[0x00])?;
+        self.interface.wait_until_idle(delay)?;
+        Ok(())
+    }
 
     /// Start an update of the whole display
     pub fn display_frame(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+        log::info!("Sending display update control command");
         self.interface.cmd_with_data(
             cmd::Cmd::UPDATE_DISPLAY_CTRL2,
             &[flag::Flag::DISPLAY_MODE_1],
         )?;
+        log::info!("Sending master activate command");
         self.interface.cmd(cmd::Cmd::MASTER_ACTIVATE)?;
 
-        self.interface.wait_until_idle(delay);
+        log::info!("Waiting for a short delay after master activate command");
+        delay.delay_ms(100);
 
+        log::info!("Waiting until display is idle");
+        self.interface.wait_until_idle(delay)?;
+
+        log::info!("Display frame update completed");
         Ok(())
     }
 
@@ -147,12 +162,4 @@ where
             .cmd_with_data(cmd::Cmd::SET_RAMY_COUNTER, &[y as u8, (y >> 8) as u8])?;
         Ok(())
     }
-
-    // pub fn wake_up<DELAY: DelayMs<u8>>(
-    //     &mut self,
-    //     spi: &mut SPI,
-    //     delay: &mut DELAY,
-    // ) -> Result<(), SPI::Error> {
-    //     todo!()
-    // }
 }

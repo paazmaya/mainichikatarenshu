@@ -7,13 +7,14 @@ use embedded_hal::{
 };
 
 const RESET_DELAY_MS: u8 = 10;
+const BUSY_WAIT_TIMEOUT_MS: u32 = 5000; // 5 seconds timeout
 
 /// The Connection Interface of all (?) Waveshare EPD-Devices
 ///
 pub(crate) struct DisplayInterface<SPI, BSY, DC, RST> {
     /// SPI device
     spi: SPI,
-    /// Low for busy, Wait until display is ready!
+    /// High (based on Arduino code) for busy, Wait until display is ready!
     busy: BSY,
     /// Data/Command Control Pin (High for data, Low for command)
     dc: DC,
@@ -37,6 +38,7 @@ where
 {
     /// Basic function for sending commands
     pub(crate) fn cmd(&mut self, command: u8) -> Result<(), DisplayError> {
+        log::info!("Sending command: 0x{:02X}", command);
         // low for commands
         self.dc.set_low().map_err(|_| DisplayError::DCError)?;
 
@@ -48,6 +50,7 @@ where
 
     /// Basic function for sending an array of u8-values of data over spi
     pub(crate) fn data(&mut self, data: &[u8]) -> Result<(), DisplayError> {
+        log::info!("Sending data.len(): {:?}", data.len());
         // high for data
         self.dc.set_high().map_err(|_| DisplayError::DCError)?;
 
@@ -77,18 +80,31 @@ where
         Ok(())
     }
 
-    /// Waits until device isn't busy anymore (busy == HIGH)
-    pub(crate) fn wait_until_idle(&mut self, delay: &mut impl DelayNs) {
+    /// Waits until device isn't busy anymore (busy == HIGH) with a timeout
+    pub(crate) fn wait_until_idle(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+        log::info!("Entering wait_until_idle");
+        let mut elapsed_time = 0;
         while self.busy.is_high().unwrap_or(true) {
-            delay.delay_ms(1)
+            if elapsed_time >= BUSY_WAIT_TIMEOUT_MS {
+                log::error!("Timeout waiting for device to become idle");
+                return Err(DisplayError::BusWriteError);
+            }
+            log::info!("Device is busy, waiting...");
+            delay.delay_ms(10);
+            elapsed_time += 10;
         }
+        log::info!("Device is idle");
+        Ok(())
     }
 
     /// Resets the device.
     pub(crate) fn reset(&mut self, delay: &mut impl DelayNs) {
+        log::info!("Resetting device");
         self.rst.set_low().unwrap();
         delay.delay_ms(RESET_DELAY_MS.into());
         self.rst.set_high().unwrap();
         delay.delay_ms(RESET_DELAY_MS.into());
+        log::info!("Device reset complete, waiting for idle");
+        self.wait_until_idle(delay);
     }
 }

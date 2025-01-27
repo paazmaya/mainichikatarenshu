@@ -69,16 +69,9 @@ fn main() -> anyhow::Result<()> {
     )
     .expect("Could not create EPD driver");
 
-    // Perform hardware reset
-    ssd1680.reset(&mut delay).expect("Failed to reset EPD");
-
-    // Initialize display
-    ssd1680.init(&mut delay).expect("Failed to initialize EPD");
-
     // Clear frame
-    ssd1680
-        .clear_frame()
-        .expect("Failed to clear black and white frame");
+    log::info!("Clearing frame");
+    ssd1680.clear_frame().expect("Failed to clear frame");
 
     // Create buffer for black and white
     let mut display = Display2in13::new();
@@ -92,7 +85,6 @@ fn main() -> anyhow::Result<()> {
     let style2 = MonoTextStyleBuilder::new()
         .font(&ISO15_10)
         .text_color(BinaryColor::On)
-        .background_color(BinaryColor::Off)
         .build();
     let text = Text::new("Hei senkin tonttu, yritä nyt...", Point::new(4, 10), style1);
     text.draw(&mut display).expect("Failed to draw text");
@@ -107,7 +99,6 @@ fn main() -> anyhow::Result<()> {
     let style3 = MonoTextStyleBuilder::new()
         .font(&JIS_9)
         .text_color(BinaryColor::On)
-        .background_color(BinaryColor::Off)
         .build();
     Text::new(
         // Japanese text katakana only
@@ -119,7 +110,7 @@ fn main() -> anyhow::Result<()> {
     .expect("Failed to katakana draw text");
 
     // Display updated frame
-    log::info!("Update bw frame");
+    log::info!("Update frame");
     ssd1680
         .update_frame(&display.buffer())
         .expect("Failed to update black and white frame");
