@@ -64,32 +64,14 @@ fn main() -> anyhow::Result<()> {
     .expect("Could not create EPD driver");
 
     ssd1680
-        .init(&mut delay)
-        .expect("Failed to initialize display");
-
-    ssd1680
-        .clear_bw_frame()
+        .clear_red_frame()
         .expect("Failed to clear black and white frame");
 
     // Create buffer for black and white
-    let mut display = Display2in13::bw();
+    let mut display = Display2in13::red();
     // 128*296 is the real size of the display, while this driver gives 122*250
-    display.set_rotation(DisplayRotation::Rotate270);
 
-    log::info!("Go clear buffer");
-    display.clear_buffer(Color::Black);
-    display
-        .clear(BinaryColor::On)
-        .expect("Failed to clear display");
-
-    display
-        .fill_solid(
-            &Rectangle::new(Point::new(0, 0), Size::new(122, 250)),
-            Black,
-        )
-        .expect("Failed to fill display");
-
-    //draw_rotation_and_rulers(&mut display);
+    draw_rotation_and_rulers(&mut display);
 
     log::info!("Draw text 1");
     // Two ways to create style
@@ -126,10 +108,11 @@ fn main() -> anyhow::Result<()> {
     // Display updated frame
     log::info!("Update bw frame");
     ssd1680
-        .update_bw_frame(&display.buffer())
+        .update_red_frame(&display.buffer())
         .expect("Failed to update black and white frame");
 
     log::info!("Display frame");
+
 
     ssd1680
         .display_frame(&mut delay)
