@@ -39,28 +39,7 @@ where
 
     /// Initialise the controller
     pub fn init(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
-        self.interface.reset(delay);
-        self.interface.cmd(cmd::Cmd::SW_RESET)?;
-        self.interface.wait_until_idle(delay)?;
-
-        self.interface
-            .cmd_with_data(cmd::Cmd::DRIVER_CONTROL, &[HEIGHT - 1, 0x00, 0x00])?;
-
-        self.interface.cmd_with_data(
-            cmd::Cmd::DATA_ENTRY_MODE,
-            &[flag::Flag::DATA_ENTRY_INCRY_INCRX],
-        )?;
-
-        self.interface.cmd_with_data(
-            cmd::Cmd::BORDER_WAVEFORM_CONTROL,
-            &[flag::Flag::BORDER_WAVEFORM_FOLLOW_LUT | flag::Flag::BORDER_WAVEFORM_LUT1],
-        )?;
-
-        self.interface
-            .cmd_with_data(cmd::Cmd::TEMP_CONTROL, &[flag::Flag::INTERNAL_TEMP_SENSOR])?;
-
-        self.interface
-            .cmd_with_data(cmd::Cmd::DISPLAY_UPDATE_CONTROL, &[0x00, 0x80])?;
+        self.interface.init(delay);
 
         self.use_full_frame()?;
 
@@ -87,7 +66,7 @@ where
     pub fn display_frame(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
         log::info!("Sending display update control command");
         self.interface.cmd_with_data(
-            cmd::Cmd::UPDATE_DISPLAY_CTRL2,
+            cmd::Cmd::DISPLAY_UPDATE_CTRL2,
             &[flag::Flag::DISPLAY_MODE_1],
         )?;
         log::info!("Sending master activate command");
@@ -110,13 +89,20 @@ where
         // TODO: allow non-white background color
         let color = color::Color::White.get_byte_value();
 
-        self.interface.cmd(cmd::Cmd::WRITE_CLEAR_DATA)?;
+        self.interface.cmd(cmd::Cmd::WRITE_BW_DATA)?;
         self.interface
             .data_x_times(color, u32::from(WIDTH) / 8 * u32::from(HEIGHT))?;
         Ok(())
     }
 
     fn use_full_frame(&mut self) -> Result<(), DisplayError> {
+        /*
+        Write Image and Drive Display Panel
+        • Write image data in RAM by Command 0x4E, 0x4F, 0x24, 0x26
+        • Set softstart setting by Command 0x0C
+        • Drive display panel by Command 0x22, 0x20
+        • Wait BUSY Low
+        */
         // choose full frame/ram
         self.set_ram_area(0, 0, u32::from(WIDTH) - 1, u32::from(HEIGHT) - 1)?;
 
@@ -134,13 +120,20 @@ where
         assert!(start_x < end_x);
         assert!(start_y < end_y);
 
+        /*
+        Write Image and Drive Display Panel
+        • Write image data in RAM by Command 0x4E, 0x4F, 0x24, 0x26
+        • Set softstart setting by Command 0x0C
+        • Drive display panel by Command 0x22, 0x20
+        • Wait BUSY Low
+        */
         self.interface.cmd_with_data(
-            cmd::Cmd::SET_RAMXPOS,
+            cmd::Cmd::SET_RAMX_COUNTER, // Set RAM X - address counter
             &[(start_x >> 3) as u8, (end_x >> 3) as u8],
         )?;
 
         self.interface.cmd_with_data(
-            cmd::Cmd::SET_RAMYPOS,
+            cmd::Cmd::SET_RAMY_COUNTER, // Set RAM Y - address counter
             &[
                 start_y as u8,
                 (start_y >> 8) as u8,

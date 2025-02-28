@@ -17,6 +17,14 @@ cargo install espup@0.11.0 # Get ESP tooling handler, version that still works i
 espup install # Install ESP tools
 ```
 
+In case there was an earlier installation of esp toolchain, that folder shoulbe be removed so it is not reused.
+C:\\Users\\Jukka\\.rustup\\toolchains\\esp\
+
+https://community.chocolatey.org/packages/llvm
+choco install llvm
+
+
+
 ## Parts
 
 [CrowPanel ESP32 2.9" E-paper HMI Display with 128*296 Resolution, Black/White Color Driven By SPI Interface](https://www.elecrow.com/crowpanel-esp32-2-9-e-paper-hmi-display-with-128-296-resolution-black-white-color-driven-by-spi-interface.html)
@@ -368,8 +376,8 @@ Same for both.
 
 
 It took some time to come back to this project as the Waveshare driver and embedded graphics seemed to be
-har to get working together.
-Finally when lookig at the diff 
+hard to get working together.
+Finally when looking at the diff 
 https://github.com/caemor/epd-waveshare/compare/v0.5.0...v0.6.0
 and 
 https://github.com/embedded-graphics/embedded-graphics

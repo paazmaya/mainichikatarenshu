@@ -13,6 +13,7 @@ use esp_idf_svc::hal::gpio::IOPin;
 
 mod ssd1680;
 
+use esp_idf_svc::hal::spi::Spi;
 use ssd1680::color::Color::{Black, White};
 
 pub use crate::ssd1680::color::Color;
@@ -54,7 +55,7 @@ fn main() -> anyhow::Result<()> {
         Option::<gpio::AnyIOPin>::None,
         Some(pins.gpio45),
         &spi::SpiDriverConfig::new().dma(spi::Dma::Disabled),
-        &spi::SpiConfig::new().baudrate(26.MHz().into()),
+        &spi::SpiConfig::new().baudrate(8.MHz().into()),
     )
     .expect("Could not create SPI device driver");
 

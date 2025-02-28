@@ -13,11 +13,11 @@ impl Flag {
 
 /*
 Arduino example code had these:
-0x80 - Internal Temperature Sensor
-0xF4 - Display Update Sequence Control (Full Update)
-0xB1 - Display Update Sequence Control (Fast Update)
-0x91 - Display Update Sequence Control (Partial Update)
-0xC7 - Display Update Sequence Control (Partial Update)
-0x03 - Data Entry Mode (Increment Y, Increment X)
 0x01 - Border Waveform Control (Follow LUT, LUT1)
+0x03 - Data Entry Mode (Increment Y, Increment X)
+0x80 - Internal Temperature Sensor
+0x91 - Display Update Sequence Control (Partial Update)
+0xB1 - Display Update Sequence Control (Fast Update)
+0xC7 - Display Update Sequence Control (Partial Update)
+0xF4 - Display Update Sequence Control (Full Update)
 */
