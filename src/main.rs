@@ -2,19 +2,14 @@ use anyhow::Ok;
 
 use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
 use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::primitives::Circle;
 use embedded_graphics::primitives::Line;
 use embedded_graphics::primitives::PrimitiveStyle;
-use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::Alignment;
 use embedded_graphics::text::TextStyleBuilder;
 use embedded_graphics::{prelude::*, text::Text};
-use esp_idf_svc::hal::gpio::IOPin;
 
 mod ssd1680;
 
-use esp_idf_svc::hal::spi::Spi;
-use ssd1680::color::Color::{Black, White};
 
 pub use crate::ssd1680::color::Color;
 pub use crate::ssd1680::driver::Ssd1680;
@@ -30,7 +25,6 @@ use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::peripherals::Peripherals;
 
 use esp_idf_svc::hal::gpio;
-use esp_idf_svc::hal::peripheral;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::spi;
 
@@ -113,7 +107,7 @@ fn main() -> anyhow::Result<()> {
     // Display updated frame
     log::info!("Update frame");
     ssd1680
-        .update_frame(&display.buffer())
+        .update_frame(display.buffer())
         .expect("Failed to update black and white frame");
 
     log::info!("Display frame");

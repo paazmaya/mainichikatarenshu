@@ -2,9 +2,7 @@
 
 use embedded_graphics::pixelcolor::BinaryColor;
 
-pub use BinaryColor::Off as Black;
 
-pub use BinaryColor::On as White;
 
 /// Black/White colors
 #[derive(Clone, Copy, PartialEq, Debug)]

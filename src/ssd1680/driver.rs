@@ -51,7 +51,7 @@ where
     pub fn update_frame(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
         self.use_full_frame()?;
         self.interface
-            .cmd_with_data(cmd::Cmd::WRITE_BW_DATA, &buffer)
+            .cmd_with_data(cmd::Cmd::WRITE_BW_DATA, buffer)
     }
     /// Wake up the device if it is in sleep mode
     pub fn wake_up(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {

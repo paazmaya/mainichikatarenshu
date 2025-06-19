@@ -7,8 +7,10 @@ use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 
 /// Displayrotation
 #[derive(Clone, Copy)]
+#[derive(Default)]
 pub enum DisplayRotation {
     /// No rotation
+    #[default]
     Rotate0,
     /// Rotate by 90 degrees clockwise
     Rotate90,
@@ -18,11 +20,6 @@ pub enum DisplayRotation {
     Rotate270,
 }
 
-impl Default for DisplayRotation {
-    fn default() -> Self {
-        DisplayRotation::Rotate0
-    }
-}
 
 /// Necessary traits for all displays to implement for drawing
 ///
@@ -109,6 +106,12 @@ pub struct Display2in13 {
     buffer: [u8; buffer_len(WIDTH as usize, HEIGHT as usize)],
     rotation: DisplayRotation,
     is_inverted: bool,
+}
+
+impl Default for Display2in13 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Display2in13 {

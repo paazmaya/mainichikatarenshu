@@ -1,5 +1,5 @@
 //! Display interface using SPI
-use crate::ssd1680::{cmd, color, flag, HEIGHT, WIDTH};
+use crate::ssd1680::{cmd, flag};
 use display_interface::DisplayError;
 use embedded_hal::{
     delay::DelayNs,
@@ -91,14 +91,14 @@ where
         //self.cs.set_low().map_err(|_| DisplayError::BusWriteError)?;
 
         // Transfer the command over spi
-        let out = self
-            .spi
-            .write(&[command])
-            .map_err(|_| DisplayError::BusWriteError);
+        
 
         //self.cs.set_high().map_err(|_| DisplayError::BusWriteError)?;
 
-        out
+        self
+            .spi
+            .write(&[command])
+            .map_err(|_| DisplayError::BusWriteError)
     }
 
     /// Basic function for sending an array of u8-values of data over spi
@@ -110,14 +110,14 @@ where
         //self.cs.set_low().map_err(|_| DisplayError::BusWriteError)?;
 
         // Transfer data (u8-array) over spi
-        let out = self
-            .spi
-            .write(data)
-            .map_err(|_| DisplayError::BusWriteError);
+        
 
         //self.cs.set_high().map_err(|_| DisplayError::BusWriteError)?;
 
-        out
+        self
+            .spi
+            .write(data)
+            .map_err(|_| DisplayError::BusWriteError)
     }
 
     pub fn updating(&mut self) {
