@@ -100,23 +100,24 @@ where
         // ----------------------
 
         // Booster Soft Start Configuration
-        log::info!("Setting booster soft start");
         self.interface.cmd_with_data(
             Cmd::BOOST_SOFT_START_CONTROL,
-            &[0x17, 0x17, 0x17], // Default values from datasheet
+            &[
+                Flag::BOOSTER_SOFT_START_PHASE1_DEFAULT,
+                Flag::BOOSTER_SOFT_START_PHASE2_DEFAULT,
+                Flag::BOOSTER_SOFT_START_PHASE3_DEFAULT,
+            ],
         )?;
         delay.delay_ms(10);
 
         // Gate Driving Voltage
-        log::info!("Setting gate voltage");
         self.interface.cmd_with_data(
             Cmd::GATE_VOLTAGE_CONTROL,
-            &[0x19], // 15V
+            &[Flag::GATE_VOLTAGE_VGH_DEFAULT], // 15V
         )?;
         delay.delay_ms(10);
 
         // Source Driving Voltage
-        log::info!("Setting source voltage");
         self.interface.cmd_with_data(
             Cmd::SOURCE_VOLTAGE_CONTROL,
             &[0x02, 0x0C, 0x0C], // VSH1/VSH2/VSL values
@@ -124,10 +125,9 @@ where
         delay.delay_ms(10);
 
         // VCOM Control
-        log::info!("Setting VCOM to moderate value");
         self.interface.cmd_with_data(
             Cmd::WRITE_VCOM_CONTROL_REGISTER,
-            &[0x28], // Using moderate VCOM value: approximately -1.4V
+            &[Flag::VCOM_DEFAULT], // Using moderate VCOM value: approximately -1.4V
         )?;
         delay.delay_ms(10);
 
@@ -136,7 +136,6 @@ where
         // ----------------------
 
         // Configure frame area to ensure proper display operation
-        log::info!("Configuring frame area");
         self.use_full_frame()?;
         delay.delay_ms(10);
 
@@ -145,7 +144,6 @@ where
         // ----------------------
 
         // Set the LUT - critical for proper display operation
-        log::info!("Loading LUT - crucial for display operation");
         self.set_lut(&Self::LUT_FULL_UPDATE)?;
         delay.delay_ms(50); // Give more time for LUT to load properly
 
@@ -156,15 +154,14 @@ where
         // Arduino EPD_Init() does NOT trigger a display update at the end
         // The commented-out lines 222-225 in EPD_Init.cpp show this was intentional
         // So we skip the initial clear and update here
-        
-        log::info!("Display initialization complete (no initial update, matching Arduino)");
+
         Ok(())
     }
 
     /// Update the whole buffer on the display driver
     pub fn update_frame(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
         self.use_full_frame()?;
-        
+
         // NOTE: This display appears to have inverted polarity (0xFF=black, 0x00=white)
         // The C++ epd_display_image() inverts data, but that might be for a different display config
         // For now, send data directly without inversion
@@ -204,7 +201,7 @@ where
     pub fn wake_up(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
         log::info!("Waking up the device");
         self.interface
-            .cmd_with_data(Cmd::DEEP_SLEEP_MODE, &[0x00])?;
+            .cmd_with_data(Cmd::DEEP_SLEEP_MODE, &[Flag::DEEP_SLEEP_NORMAL_MODE])?;
         self.interface.wait_until_idle(delay)?;
         Ok(())
     }
@@ -215,50 +212,41 @@ where
 
         // Before starting a new update, make sure the display is idle
         // Some displays need this check to avoid conflicts
-        log::info!("Ensuring display is idle before starting update");
         self.interface.wait_until_idle(delay)?;
 
         // Different display update sequence based on SSD1680 datasheet
 
         // Skip power on command as it's not defined in our command set
         // Instead just add a substantial delay before starting update sequence
-        log::info!("Adding pre-update delay for power stability");
         delay.delay_ms(100); // Substantial delay before update sequence
 
         // 1. Set display update control 1
-        log::info!("Setting display update control 1");
         self.interface.cmd_with_data(
             Cmd::DISPLAY_UPDATE_CTRL1,
-            &[0x01], // Update only B/W RAM for simpler operation
+            &[Flag::DISPLAY_UPDATE_BW_RAM], // Update only B/W RAM for simpler operation
         )?;
         delay.delay_ms(20); // Longer delay to ensure command is processed
 
         // 2. Set display update control 2
-        log::info!("Setting display update control 2");
         self.interface.cmd_with_data(
             Cmd::DISPLAY_UPDATE_CTRL2,
-            &[0xF4], // Value from working C++ implementation (was 0xC7 in SSD1680 datasheet)
+            &[Flag::DISPLAY_UPDATE_FULL], // Value from working C++ implementation
         )?;
         delay.delay_ms(20); // Longer delay to ensure command is processed
 
         // 3. Master activate - this actually triggers the display update
-        log::info!("Sending master activate command");
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         // Critical delay right after Master Activate - this is when the display begins updating
-        log::info!("Adding delay after master activate");
         delay.delay_ms(300); // Longer delay to ensure update starts properly
 
         // 4. Wait for display to be ready
-        log::info!("Waiting for display to complete update (BUSY flag should go LOW)");
         self.interface.wait_until_idle(delay)?;
 
         // 5. Send NOP to terminate the update sequence
-        log::info!("Sending NOP to terminate update sequence");
         self.interface.cmd(Cmd::NOP)?;
 
         // Extra stabilization delay after display update completes
-        log::info!("Display update complete, adding stability delay");
         delay.delay_ms(200); // Longer stability delay
 
         log::info!("Display frame update completed successfully");
@@ -273,20 +261,16 @@ where
         // Clear frame with white
         let color = color::Color::White.get_byte_value();
 
-        log::info!("Writing white data to entire frame buffer");
         // Write white data
         self.interface.cmd(Cmd::WRITE_BW_DATA)?;
 
         let total_bytes = u32::from(WIDTH) / 8 * u32::from(HEIGHT);
-        log::info!("Writing {} bytes of white data", total_bytes);
 
         self.interface.data_x_times(color, total_bytes)?;
 
         // Update display
-        log::info!("Updating display to show white frame");
         self.display_frame(delay)?;
 
-        log::info!("Frame cleared successfully");
         Ok(())
     }
 
@@ -301,8 +285,6 @@ where
         let height = HEIGHT as u32;
         let buffer_size = (width_bytes * height) as usize;
 
-        log::info!("Creating test pattern buffer of {} bytes", buffer_size);
-
         // *** IMPORTANT: Try both black and white backgrounds to see what works ***
         // Some displays invert the colors from what we expect
         let invert_colors = false; // Try changing to true if display shows inverted pattern
@@ -311,7 +293,6 @@ where
         let mut buffer = vec![if invert_colors { 0xFF } else { 0x00 }; buffer_size];
 
         // 1. Draw large diagonal stripes - very visible pattern
-        log::info!("Drawing diagonal stripes pattern");
         let stripe_width = 16; // Wide stripes (16 pixels)
 
         for y in 0..height {
@@ -342,7 +323,6 @@ where
         }
 
         // 2. Add a thick border - very visible
-        log::info!("Drawing thick border");
         const BORDER_WIDTH: u32 = 8; // Extra thick border
 
         // Top and bottom borders
@@ -376,7 +356,6 @@ where
         }
 
         // 3. Draw a large X pattern across the display - very visible
-        log::info!("Drawing X pattern");
         for y in 0..height {
             // Calculate the byte and bit for the two diagonal lines
             let x1 = (y * WIDTH as u32) / height;
@@ -603,45 +582,37 @@ where
     /// This provides quicker refreshes but may have more ghosting than full updates
     pub fn fast_update(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
         log::info!("Starting fast update sequence from C++ implementation");
-        
+
         // Hardware reset as per C++ implementation
         self.interface.reset(delay)?;
         delay.delay_ms(100);
-        
+
         // First update sequence: 0xB1 - start reading temperature, load LUT, full update, clock off
         log::info!("Fast update step 1: Temperature read and LUT load");
-        self.interface.cmd_with_data(
-            Cmd::DISPLAY_UPDATE_CTRL2,
-            &[0xB1],
-        )?;
+        self.interface
+            .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xB1])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
         self.interface.wait_until_idle(delay)?;
-        
+
         // Write temperature parameter
         log::info!("Fast update step 2: Write temperature parameter");
-        self.interface.cmd_with_data(
-            Cmd::TEMP_CONTROL_WRITE,
-            &[0x64, 0x00],
-        )?;
-        
+        self.interface
+            .cmd_with_data(Cmd::TEMP_CONTROL_WRITE, &[0x64, 0x00])?;
+
         // Second update sequence: 0x91
         log::info!("Fast update step 3: Update with 0x91");
-        self.interface.cmd_with_data(
-            Cmd::DISPLAY_UPDATE_CTRL2,
-            &[0x91],
-        )?;
+        self.interface
+            .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0x91])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
         self.interface.wait_until_idle(delay)?;
-        
+
         // Third update sequence: 0xC7
         log::info!("Fast update step 4: Final update with 0xC7");
-        self.interface.cmd_with_data(
-            Cmd::DISPLAY_UPDATE_CTRL2,
-            &[0xC7],
-        )?;
+        self.interface
+            .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xC7])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
         self.interface.wait_until_idle(delay)?;
-        
+
         log::info!("Fast update sequence completed");
         Ok(())
     }
@@ -684,8 +655,7 @@ where
 
         // X range: 0 to (WIDTH/8 - 1)
         self.interface.cmd(Cmd::SET_RAMX_START_END)?;
-        self.interface
-            .data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
+        self.interface.data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
         delay.delay_ms(50);
 
         // Y range: 0 to (HEIGHT - 1)
@@ -1153,25 +1123,25 @@ where
     /// Exact C++ epd_all_fill() implementation for testing
     pub fn cpp_all_fill(&mut self, color: u8) -> Result<(), DisplayError> {
         log::info!("C++ epd_all_fill with color: 0x{:02X}", color);
-        
+
         // Border waveform control - EXACTLY as in C++
-        self.interface.cmd(0x3C)?;
+        self.interface.cmd(Cmd::BORDER_WAVEFORM_CONTROL)?;
         if color != 0 {
-            self.interface.data(&[0x01])?;
+            self.interface.data(&[Flag::BORDER_WAVEFORM_WHITE])?;
         } else {
-            self.interface.data(&[0x00])?;
+            self.interface.data(&[Flag::BORDER_WAVEFORM_BLACK])?;
         }
-        
-        // Write RAM (0x24)
-        self.interface.cmd(0x24)?;
-        
+
+        // Write RAM (WRITE_BW_DATA)
+        self.interface.cmd(Cmd::WRITE_BW_DATA)?;
+
         // Write color to all bytes
         let total_bytes = (WIDTH as u32 / 8) * HEIGHT as u32;
         self.interface.data_x_times(color, total_bytes)?;
-        
+
         // Wait for busy - EXACTLY as in C++
         self.interface.wait_busy_low();
-        
+
         log::info!("C++ epd_all_fill complete");
         Ok(())
     }
@@ -1179,17 +1149,17 @@ where
     /// Exact C++ epd_update() implementation for testing
     pub fn cpp_update(&mut self) -> Result<(), DisplayError> {
         log::info!("C++ epd_update");
-        
-        // DISPLAY_UPDATE_CTRL2 with 0xF4
-        self.interface.cmd(0x22)?;
-        self.interface.data(&[0xF4])?;
-        
+
+        // DISPLAY_UPDATE_CTRL2 with full update
+        self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
+        self.interface.data(&[Flag::DISPLAY_UPDATE_FULL])?;
+
         // MASTER_ACTIVATE
-        self.interface.cmd(0x20)?;
-        
+        self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
+
         // Wait for busy
         self.interface.wait_busy_low();
-        
+
         log::info!("C++ epd_update complete");
         Ok(())
     }
@@ -1197,17 +1167,17 @@ where
     /// Exact C++ epd_clear_r26h() implementation
     pub fn cpp_clear_r26h(&mut self) -> Result<(), DisplayError> {
         log::info!("C++ epd_clear_r26h");
-        
-        // Write to RED RAM (0x26)
-        self.interface.cmd(0x26)?;
-        
+
+        // Write to RED RAM
+        self.interface.cmd(Cmd::WRITE_RED_DATA)?;
+
         // Fill with WHITE (0xFF in C++ code)
         let total_bytes = (WIDTH as u32 / 8) * HEIGHT as u32;
         self.interface.data_x_times(0xFF, total_bytes)?;
-        
+
         // Wait for busy
         self.interface.wait_busy_low();
-        
+
         log::info!("C++ epd_clear_r26h complete");
         Ok(())
     }
@@ -1215,49 +1185,49 @@ where
     /// Exact Arduino EPD_Init() - minimal initialization matching Arduino exactly
     pub fn cpp_init(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
         log::info!("C++ EPD_Init() - exact Arduino initialization");
-        
+
         // Hardware reset
         self.interface.reset(delay)?;
-        
+
         // Software reset
         self.interface.cmd(0x12)?;
         self.interface.wait_busy_low();
-        
+
         // Driver output control
         self.interface.cmd(0x01)?;
         self.interface.data(&[0x27, 0x01, 0x00])?;
-        
+
         // Data entry mode
         self.interface.cmd(0x11)?;
         self.interface.data(&[0x03])?;
-        
+
         // RAM X address
         self.interface.cmd(0x44)?;
         self.interface.data(&[0x00, 0x0F])?;
-        
+
         // RAM Y address
         self.interface.cmd(0x45)?;
         self.interface.data(&[0x00, 0x00, 0x27, 0x01])?;
-        
+
         // Border waveform
         self.interface.cmd(0x3C)?;
         self.interface.data(&[0x01])?;
-        
+
         // Temperature sensor
         self.interface.cmd(0x18)?;
         self.interface.data(&[0x80])?;
-        
+
         // RAM X counter
         self.interface.cmd(0x4E)?;
         self.interface.data(&[0x00])?;
-        
+
         // RAM Y counter
         self.interface.cmd(0x4F)?;
         self.interface.data(&[0x00, 0x00])?;
-        
+
         // Final busy wait
         self.interface.wait_busy_low();
-        
+
         log::info!("C++ EPD_Init() complete");
         Ok(())
     }
@@ -1270,7 +1240,7 @@ where
         // Step 1: Reset RAM X/Y pointers
         self.interface.cmd(Cmd::SET_RAMX_COUNTER)?;
         self.interface.data(&[0x00])?;
-        
+
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?;
 
@@ -1278,23 +1248,23 @@ where
         log::info!("Setting Display Update Control 1 (0x21)");
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL1)?;
         self.interface.data(&[0x01])?; // Enable ONLY B/W RAM update, disable red RAM
-        
+
         // Step 3: Set update control with working C++ value
         log::info!("Setting Display Update Control 2 (0x22) with working C++ value");
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
         self.interface.data(&[0xF4])?; // Use working C++ value (was 0xC7 in datasheet)
-        
+
         // Step 4: Activate
         log::info!("Activating display update with Master Activate (0x20)");
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        
+
         // Step 5: Wait until operation completes
         log::info!("Waiting for busy signal to clear...");
         self.interface.wait_busy_low();
-        
+
         // Note: If the above doesn't work, we'll try the Arduino-specific approach
         log::info!("Arduino-compatible approach completed, display should update now");
-        
+
         Ok(())
     }
 
@@ -1335,8 +1305,7 @@ where
 
         // X address: 0 to (WIDTH/8 - 1) = 0 to 15 for 128 pixel width
         self.interface.cmd(Cmd::SET_RAMX_START_END)?;
-        self.interface
-            .data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
+        self.interface.data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
         delay.delay_ms(20);
 
         // Y address: 0 to (HEIGHT - 1) = 0 to 295 for 296 pixel height
@@ -1345,7 +1314,7 @@ where
         self.interface.data(&[
             0x00,
             0x00,                      // Y start = 0 (LSB, MSB)
-            ((HEIGHT - 1) as u8), // Y end LSB (295 & 0xFF = 0x27)
+            ((HEIGHT - 1) as u8),      // Y end LSB (295 & 0xFF = 0x27)
             ((HEIGHT - 1) >> 8) as u8, // Y end MSB (295 >> 8 = 0x01)
         ])?;
         delay.delay_ms(20);
@@ -1498,90 +1467,6 @@ where
         // 2 Databytes: A[7:0] & 0..A[8]
         self.interface
             .cmd_with_data(Cmd::SET_RAMY_COUNTER, &[y as u8, (y >> 8) as u8])?;
-        Ok(())
-    }
-
-    /// Attempts to identify the controller type by reading various registers
-    /// This is useful when you're not certain which controller the display uses
-    pub fn identify_controller(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
-        log::info!("======================================================");
-        log::info!("ATTEMPTING TO IDENTIFY DISPLAY CONTROLLER");
-        log::info!("======================================================");
-
-        // Hardware reset first to ensure clean state
-        log::info!("Performing hardware reset before controller identification");
-        self.interface.reset(delay)?;
-        delay.delay_ms(200);
-
-        // Try to read status register - works on most controllers
-        log::info!("\nReading status register (common to most controllers):");
-        match self.interface.read_status_register() {
-            Ok(status) => log::info!("  Status register value: 0x{:02X}", status),
-            Err(e) => log::error!("  Failed to read status: {:?}", e),
-        }
-        delay.delay_ms(100);
-
-        // Try to detect based on ID registers - some controllers have them, some don't
-        // We'll try a few common ID registers used by different controllers
-
-        log::info!("\nAttempting to read device ID registers:");
-
-        // Try the SSD1680/SSD1681 approach (0x70 command)
-        log::info!("Testing for SSD1680/SSD1681:");
-        self.interface.cmd(0x70)?; // Get Device ID / Read Electronic Paper ID command
-
-        match self.interface.read_data(1) {
-            Ok(id) => {
-                log::info!("  Received ID: 0x{:02X}", id[0]);
-                if id[0] == 0x16 {
-                    log::info!("  ✓ Likely an SSD1680 controller (ID=0x16)");
-                } else if id[0] == 0x81 {
-                    log::info!("  ✓ Likely an SSD1681 controller (ID=0x81)");
-                } else {
-                    log::info!("  ✗ Unknown ID, not a standard SSD1680/SSD1681");
-                }
-            }
-            Err(e) => log::error!("  Failed to read SSD1680/SSD1681 ID: {:?}", e),
-        }
-        delay.delay_ms(100);
-
-        // Try IL3829/IL3820 approach (0x72 command)
-        log::info!("Testing for IL3829/IL3820:");
-        self.interface.cmd(0x72)?; // Get Device ID command for IL3829/IL3820
-
-        match self.interface.read_data(1) {
-            Ok(id) => {
-                log::info!("  Received ID: 0x{:02X}", id[0]);
-                if id[0] == 0x82 {
-                    log::info!("  ✓ Likely an IL3829/IL3820 controller (ID=0x82)");
-                } else {
-                    log::info!("  ✗ Unknown ID, not an IL3829/IL3820");
-                }
-            }
-            Err(e) => log::error!("  Failed to read IL3829/IL3820 ID: {:?}", e),
-        }
-        delay.delay_ms(100);
-
-        // Try UC8151D approach (0x74 command)
-        log::info!("Testing for UC8151D:");
-        self.interface.cmd(0x74)?; // Get Device ID command for UC8151D
-
-        match self.interface.read_data(1) {
-            Ok(id) => {
-                log::info!("  Received ID: 0x{:02X}", id[0]);
-                if id[0] == 0x51 {
-                    log::info!("  ✓ Likely a UC8151D controller (ID=0x51)");
-                } else {
-                    log::info!("  ✗ Unknown ID, not a UC8151D");
-                }
-            }
-            Err(e) => log::error!("  Failed to read UC8151D ID: {:?}", e),
-        }
-
-        log::info!("\nController identification attempts complete.");
-        log::info!("If all ID reads failed, the controller may not support ID reading,");
-        log::info!("or there may be communication issues with the display.");
-
         Ok(())
     }
 
@@ -1758,7 +1643,6 @@ where
         // Use the interface's wait_busy_low which now has proper timeout handling
         self.interface.wait_busy_low();
     }
-
 
     /// Update the display with full refresh - EXACTLY matching Arduino's EPD_Update sequence
     pub fn arduino_full_update(&mut self, _delay: &mut impl DelayNs) -> Result<(), DisplayError> {

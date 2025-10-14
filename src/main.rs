@@ -10,8 +10,10 @@ use embedded_graphics::{prelude::*, text::Text};
 
 mod ssd1680;
 
+pub use crate::ssd1680::cmd::Cmd;
 pub use crate::ssd1680::color::Color;
 pub use crate::ssd1680::driver::Ssd1680;
+pub use crate::ssd1680::flag::Flag;
 
 pub use crate::ssd1680::graphics::{Display, Display2in13, DisplayRotation};
 // https://docs.rs/embedded-graphics/0.8.1/embedded_graphics/mono_font/index.html#modules
@@ -33,62 +35,68 @@ const LOGO_IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/logo.bin"));
 /// Read current date and time from ESP32 RTC
 /// Returns formatted ISO 8601 date string (YYYY-MM-DD)
 fn get_rtc_date() -> String {
-    use esp_idf_svc::sys::{time_t, time, tm, localtime_r};
     use core::mem::MaybeUninit;
-    
+    use esp_idf_svc::sys::{localtime_r, time, time_t, tm};
+
     unsafe {
         // Get current time from RTC
         let mut now: time_t = 0;
         time(&mut now as *mut _);
-        
+
         // Convert to local time structure
         let mut timeinfo = MaybeUninit::<tm>::uninit();
         localtime_r(&now as *const _, timeinfo.as_mut_ptr());
         let timeinfo = timeinfo.assume_init();
-        
+
         // Format as ISO 8601 date (YYYY-MM-DD)
         // tm_year is years since 1900, tm_mon is 0-11
         let year = 1900 + timeinfo.tm_year;
         let month = 1 + timeinfo.tm_mon;
         let day = timeinfo.tm_mday;
-        
+
         format!("{:04}-{:02}-{:02}", year, month, day)
     }
 }
 
-
 /// Set the ESP32 RTC to a specific date and time
 /// Format: year, month (1-12), day, hour (0-23), minute (0-59), second (0-59)
 fn set_rtc_datetime(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32) {
-    use esp_idf_svc::sys::{tm, mktime, settimeofday, timeval, timezone};
     use core::mem::MaybeUninit;
-    
+    use esp_idf_svc::sys::{mktime, settimeofday, timeval, timezone, tm};
+
     unsafe {
         // Create time structure
         let mut timeinfo = MaybeUninit::<tm>::uninit();
         let timeinfo_ptr = timeinfo.as_mut_ptr();
-        
-        (*timeinfo_ptr).tm_year = year - 1900;  // Years since 1900
-        (*timeinfo_ptr).tm_mon = month - 1;     // Months since January (0-11)
+
+        (*timeinfo_ptr).tm_year = year - 1900; // Years since 1900
+        (*timeinfo_ptr).tm_mon = month - 1; // Months since January (0-11)
         (*timeinfo_ptr).tm_mday = day;
         (*timeinfo_ptr).tm_hour = hour;
         (*timeinfo_ptr).tm_min = minute;
         (*timeinfo_ptr).tm_sec = second;
-        (*timeinfo_ptr).tm_isdst = -1;          // Auto-detect DST
-        
+        (*timeinfo_ptr).tm_isdst = -1; // Auto-detect DST
+
         // Convert to time_t
         let timestamp = mktime(timeinfo_ptr);
-        
+
         // Set system time
         let tv = timeval {
             tv_sec: timestamp,
             tv_usec: 0,
         };
-        
+
         settimeofday(&tv as *const _, core::ptr::null::<timezone>());
-        
-        log::info!("RTC set to: {:04}-{:02}-{:02} {:02}:{:02}:{:02}", 
-                   year, month, day, hour, minute, second);
+
+        log::info!(
+            "RTC set to: {:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second
+        );
     }
 }
 
@@ -107,13 +115,11 @@ fn main() -> anyhow::Result<()> {
     // Set the RTC to current date/time (you can update this to the actual current date)
     // Format: year, month (1-12), day, hour (0-23), minute (0-59), second (0-59)
     log::info!("Setting RTC to current date and time");
-    set_rtc_datetime(2025, 10, 14, 13, 0, 0);  // October 14, 2025, 1:00 PM
-    
+    set_rtc_datetime(2025, 10, 14, 18, 0, 0); // October 14, 2025, 1:00 PM
+
     // Read back the date to verify
     let current_date = get_rtc_date();
     log::info!("Current RTC date: {}", current_date);
-
-    log::info!("About to initialize e-paper display");
 
     // Configure SPI to match Arduino example exactly
     log::info!("Configuring SPI with Arduino-compatible settings");
@@ -154,17 +160,6 @@ fn main() -> anyhow::Result<()> {
     log::info!("STARTING HARDWARE DIAGNOSTIC TESTS");
     log::info!("======================================================");
 
-    // Try to identify which controller the display is using
-    log::info!("\n\n=== CONTROLLER IDENTIFICATION TEST ===");
-    if let Err(e) = ssd1680.identify_controller(&mut delay) {
-        log::error!("Controller identification failed: {:?}", e);
-    } else {
-        log::info!("Controller identification attempts completed");
-    }
-
-    log::info!("\nPausing after diagnostics to check logs...");
-    delay.delay_ms(2000);
-
     // Use EXACT Arduino EPD_Init() - minimal, matching Arduino exactly
     log::info!("\n\n=== EXACT ARDUINO EPD_Init() ===");
     if let Err(e) = ssd1680.cpp_init(&mut delay) {
@@ -176,61 +171,52 @@ fn main() -> anyhow::Result<()> {
     // Now follow EXACT Arduino sequence from 2.9_key.ino setup()
     // EPD_Init() -> EPD_ALL_Fill(WHITE) -> EPD_Update() -> EPD_Clear_R26H()
     log::info!("\n\n=== EXACT ARDUINO WORKING SEQUENCE ===");
-    
-    // Step 1: EPD_ALL_Fill(WHITE) - Fill RAM with 0xFF
-    log::info!("Step 1: EPD_ALL_Fill(WHITE) - 0xFF");
-    if let Err(e) = ssd1680.cpp_all_fill(0xFF) {
+
+    // Step 1: EPD_ALL_Fill(WHITE) - Fill RAM with white pattern
+    log::info!("Step 1: EPD_ALL_Fill(WHITE)");
+    if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
         log::error!("Failed to fill with white: {:?}", e);
     }
     delay.delay_ms(100);
-    
+
     // Step 2: EPD_Update() - Trigger display update with 0xF4
     log::info!("Step 2: EPD_Update() - Trigger display refresh");
     if let Err(e) = ssd1680.cpp_update() {
         log::error!("Failed to update display: {:?}", e);
     }
     delay.delay_ms(100);
-    
+
     // Step 3: EPD_Clear_R26H() - Clear R26h AFTER update (not before!)
     log::info!("Step 3: EPD_Clear_R26H() - Clear RED RAM after update");
     if let Err(e) = ssd1680.cpp_clear_r26h() {
         log::error!("Failed to clear R26h: {:?}", e);
     }
-    
+
     log::info!("Arduino sequence complete. Display should show WHITE. Waiting 5 seconds...");
     delay.delay_ms(5000);
-    
-    // Now try with BLACK (0x00) - this should make the screen turn black
-    log::info!("\n\n========================================");
-    log::info!("=== TRYING BLACK (0x00) - SCREEN SHOULD TURN BLACK ===");
-    log::info!("========================================");
-    if let Err(e) = ssd1680.cpp_all_fill(0x00) {
+
+    // Now try with BLACK - this should make the screen turn black
+    if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_BLACK) {
         log::error!("Failed to fill with black: {:?}", e);
     }
     delay.delay_ms(100);
-    
+
     if let Err(e) = ssd1680.cpp_update() {
         log::error!("Failed to update display: {:?}", e);
     }
     delay.delay_ms(100);
-    
+
     if let Err(e) = ssd1680.cpp_clear_r26h() {
         log::error!("Failed to clear R26h: {:?}", e);
     }
-    
-    log::info!("========================================");
-    log::info!("BLACK FILL COMPLETE - CHECK DISPLAY NOW!");
+
     log::info!("Display should be COMPLETELY BLACK");
     log::info!("Waiting 3 seconds...");
-    log::info!("========================================");
     delay.delay_ms(3000);
 
-    // Now display the current date in ISO format
-    log::info!("\n\n=== DISPLAYING CURRENT DATE ===");
-    
     // Clear to white first
     log::info!("Clearing display to white");
-    if let Err(e) = ssd1680.cpp_all_fill(0xFF) {
+    if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
         log::error!("Failed to fill white: {:?}", e);
     }
     if let Err(e) = ssd1680.cpp_update() {
@@ -240,77 +226,75 @@ fn main() -> anyhow::Result<()> {
         log::error!("Failed to clear R26h: {:?}", e);
     }
     delay.delay_ms(500);
-    
+
     // Create display buffer
     log::info!("Creating display buffer with date");
     let mut display = Display2in13::new();
-    display.set_rotation(DisplayRotation::Rotate90);
-    
+    // Use Rotate270 to match the physical RAM orientation used by raw image data
+    // The raw logo image is pre-rotated for physical display (128×296)
+    display.set_rotation(DisplayRotation::Rotate270);
+
     // Clear buffer to white (Off = white for this display)
-    display.clear(BinaryColor::Off).expect("Failed to clear buffer");
-    
+    display
+        .clear(BinaryColor::Off)
+        .expect("Failed to clear buffer");
+
     // Get current date from RTC
     let date_text = get_rtc_date();
-    log::info!("Displaying date from RTC: {}", date_text);
-    
+
     // Draw the date in large font
     let text_style = MonoTextStyleBuilder::new()
         .font(&ISO15_10)
         .text_color(BinaryColor::On) // On = black pixels
         .build();
-    
+
     Text::new(&date_text, Point::new(10, 30), text_style)
         .draw(&mut display)
         .expect("Failed to draw date");
-    
+
     // Add a label
     let label_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
     Text::new("Current Date:", Point::new(10, 10), label_style)
         .draw(&mut display)
         .expect("Failed to draw label");
-    
+
     // Send buffer to display using Arduino-compatible method
-    log::info!("Sending date buffer to display");
-    
-    // Write buffer to RAM (0x24)
-    if let Err(e) = ssd1680.direct_cmd(0x24) {
+    // Write buffer to RAM (WRITE_BW_DATA)
+    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
         log::error!("Failed to select RAM: {:?}", e);
         return Err(anyhow::anyhow!("Failed to select RAM: {:?}", e));
     }
-    
+
     // Send the buffer data
     if let Err(e) = ssd1680.direct_data(display.buffer()) {
         log::error!("Failed to write buffer: {:?}", e);
         return Err(anyhow::anyhow!("Failed to write buffer: {:?}", e));
     }
-    
+
     // Update display
     if let Err(e) = ssd1680.cpp_update() {
         log::error!("Failed to update display: {:?}", e);
         return Err(anyhow::anyhow!("Failed to update display: {:?}", e));
     }
-    
+
     if let Err(e) = ssd1680.cpp_clear_r26h() {
         log::error!("Failed to clear R26h: {:?}", e);
     }
-    
-    log::info!("========================================");
+
     log::info!("DATE DISPLAYED - CHECK SCREEN!");
     log::info!("Should show: {}", date_text);
-    log::info!("========================================");
     delay.delay_ms(5000);
 
     // Now display the logo image (pre-converted at build time)
-    log::info!("\n\n=== DISPLAYING LOGO IMAGE ===");
-    
+
     if LOGO_IMAGE.is_empty() {
         log::warn!("Logo image not available (logo.png not found at build time)");
         log::warn!("Skipping logo display...");
     } else {
         log::info!("Logo image embedded, size: {} bytes", LOGO_IMAGE.len());
-        
+
         // Clear to white first
-        if let Err(e) = ssd1680.cpp_all_fill(0xFF) {
+        if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
             log::error!("Failed to fill white: {:?}", e);
         }
         if let Err(e) = ssd1680.cpp_update() {
@@ -320,10 +304,10 @@ fn main() -> anyhow::Result<()> {
             log::error!("Failed to clear R26h: {:?}", e);
         }
         delay.delay_ms(500);
-        
+
         // Send image buffer to display
         log::info!("Sending logo buffer to display");
-        if let Err(e) = ssd1680.direct_cmd(0x24) {
+        if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
             log::error!("Failed to select RAM: {:?}", e);
         } else {
             // Send the pre-converted image buffer
@@ -337,87 +321,99 @@ fn main() -> anyhow::Result<()> {
                     if let Err(e) = ssd1680.cpp_clear_r26h() {
                         log::error!("Failed to clear R26h: {:?}", e);
                     }
-                    
-                    log::info!("========================================");
+
                     log::info!("LOGO DISPLAYED - CHECK SCREEN!");
-                    log::info!("========================================");
                 }
             }
         }
-        
+
         delay.delay_ms(10000);
     }
 
     // Original test follows
     log::info!("\n\n=== ARDUINO CLEAR TO WHITE ===");
-    if let Err(e) = ssd1680.direct_cmd(0x3C) {
+    if let Err(e) = ssd1680.direct_cmd(Cmd::BORDER_WAVEFORM_CONTROL) {
         log::error!("Failed to set border waveform: {:?}", e);
         return Err(anyhow::anyhow!("Failed to set border waveform: {:?}", e));
     }
-    if let Err(e) = ssd1680.direct_data(&[0x01]) {
+    if let Err(e) = ssd1680.direct_data(&[Flag::BORDER_WAVEFORM_WHITE]) {
         log::error!("Failed to set border data: {:?}", e);
         return Err(anyhow::anyhow!("Failed to set border data: {:?}", e));
     }
 
     // Fill RAM with WHITE - trying 0x00 since display shows inverted (0xFF showed as black)
     log::info!("Filling RAM with WHITE (0x00) pixels - display polarity appears inverted");
-    if let Err(e) = ssd1680.direct_cmd(0x24) {
+    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
         log::error!("Failed to send write command: {:?}", e);
         return Err(anyhow::anyhow!("Failed to send write command: {:?}", e));
     }
 
     // Create a buffer to send in chunks more efficiently
-    let white_buffer = vec![0x00; 64]; // All WHITE (using 0x00 - inverted polarity)
-    
-    for i in 0..(4736/64) {
+    let white_buffer = vec![Flag::AUTO_WRITE_PATTERN_ALL_BLACK; 64]; // All WHITE (using black pattern - inverted polarity)
+
+    for i in 0..(4736 / 64) {
         if i % 10 == 0 {
-            log::info!("Sending chunk {}/{}", i, 4736/64);
+            log::info!("Sending chunk {}/{}", i, 4736 / 64);
         }
-        
+
         if let Err(e) = ssd1680.direct_data(&white_buffer) {
             log::error!("Failed to write white data: {:?}", e);
             return Err(anyhow::anyhow!("Failed to write white data: {:?}", e));
         }
     }
-    
+
     // Send any remaining bytes
     let remaining = 4736 % 64;
     if remaining > 0 {
         if let Err(e) = ssd1680.direct_data(&white_buffer[0..remaining]) {
             log::error!("Failed to write remaining white data: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to write remaining white data: {:?}", e));
+            return Err(anyhow::anyhow!(
+                "Failed to write remaining white data: {:?}",
+                e
+            ));
         }
     }
 
     // Update display with proper sequence according to SSD1680 datasheet
     log::info!("Updating display with white - using proper update sequence");
-    
+
     // Step 1: Specify which RAM to use for update - ONLY use BW RAM (0x24)
-    if let Err(e) = ssd1680.direct_cmd(0x21) { // DISPLAY_UPDATE_CTRL1
+    if let Err(e) = ssd1680.direct_cmd(Cmd::DISPLAY_UPDATE_CTRL1) {
         log::error!("Failed to set display update control 1: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to set display update control 1: {:?}", e));
+        return Err(anyhow::anyhow!(
+            "Failed to set display update control 1: {:?}",
+            e
+        ));
     }
-    if let Err(e) = ssd1680.direct_data(&[0x01]) { // Use only BW RAM
+    if let Err(e) = ssd1680.direct_data(&[Flag::DISPLAY_UPDATE_BW_RAM]) {
+        // Use only BW RAM
         log::error!("Failed to set RAM usage: {:?}", e);
         return Err(anyhow::anyhow!("Failed to set RAM usage: {:?}", e));
     }
-    
+
     // Step 2: Set update control with working C++ value
-    if let Err(e) = ssd1680.direct_cmd(0x22) { // DISPLAY_UPDATE_CTRL2
+    if let Err(e) = ssd1680.direct_cmd(Cmd::DISPLAY_UPDATE_CTRL2) {
         log::error!("Failed to set display update control 2: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to set display update control 2: {:?}", e));
+        return Err(anyhow::anyhow!(
+            "Failed to set display update control 2: {:?}",
+            e
+        ));
     }
-    if let Err(e) = ssd1680.direct_data(&[0xF4]) { // Use working C++ value (was 0xC7 in datasheet)
+    if let Err(e) = ssd1680.direct_data(&[Flag::DISPLAY_UPDATE_FULL]) {
+        // Use full update sequence
         log::error!("Failed to set update control: {:?}", e);
         return Err(anyhow::anyhow!("Failed to set update control: {:?}", e));
     }
-    
+
     // Step 3: Activate display update
-    if let Err(e) = ssd1680.direct_cmd(0x20) { // MASTER_ACTIVATE
+    if let Err(e) = ssd1680.direct_cmd(Cmd::MASTER_ACTIVATE) {
         log::error!("Failed to activate display update: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to activate display update: {:?}", e));
+        return Err(anyhow::anyhow!(
+            "Failed to activate display update: {:?}",
+            e
+        ));
     }
-    
+
     // CRITICAL: Wait for BUSY pin to go LOW (display update takes ~2 seconds)
     log::info!("Waiting for display update to complete (BUSY pin)...");
     ssd1680.wait_busy();
@@ -427,14 +423,14 @@ fn main() -> anyhow::Result<()> {
 
     // Clear register 0x26 (RED RAM) with WHITE (0xFF) for proper operation
     log::info!("Clearing register 0x26 (RED RAM) with WHITE (0xFF)");
-    if let Err(e) = ssd1680.direct_cmd(0x26) {
+    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_RED_DATA) {
         log::error!("Failed to select RAM: {:?}", e);
         return Err(anyhow::anyhow!("Failed to select RAM: {:?}", e));
     }
-    
+
     // Create a simple test pattern (checkerboard)
     log::info!("\n\n=== ARDUINO TEST PATTERN ===");
-    if let Err(e) = ssd1680.direct_cmd(0x24) {
+    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
         log::error!("Failed to select RAM for pattern: {:?}", e);
         return Err(anyhow::anyhow!("Failed to select RAM for pattern: {:?}", e));
     }
@@ -443,66 +439,80 @@ fn main() -> anyhow::Result<()> {
     log::info!("Creating comprehensive test pattern buffer");
     let mut pattern_buffer = Vec::with_capacity(4736);
 
-    // First 592 bytes (4 rows): Solid black (0x00)
+    // First 592 bytes (4 rows): Solid black
     for _ in 0..592 {
-        pattern_buffer.push(0x00);
+        pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_BLACK);
     }
-    
-    // Next 592 bytes (4 rows): Solid white (0xFF) 
+
+    // Next 592 bytes (4 rows): Solid white
     for _ in 0..592 {
-        pattern_buffer.push(0xFF);
+        pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_WHITE);
     }
-    
+
     // Next 592 bytes (4 rows): Horizontal stripes
     for i in 0..592 {
-        pattern_buffer.push(if (i / 16) % 2 == 0 { 0xFF } else { 0x00 });
+        pattern_buffer.push(if (i / 16) % 2 == 0 {
+            Flag::AUTO_WRITE_PATTERN_ALL_WHITE
+        } else {
+            Flag::AUTO_WRITE_PATTERN_ALL_BLACK
+        });
     }
-    
+
     // Next 592 bytes (4 rows): Vertical stripes
     for _ in 0..592 {
-        pattern_buffer.push(0xAA); // 10101010 pattern
+        pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_CHECKERBOARD1); // 10101010 pattern
     }
-    
+
     // Next 592 bytes (4 rows): Checkerboard
     for i in 0..592 {
-        pattern_buffer.push(if (i / 16) % 2 == 0 { 
-            if i % 2 == 0 { 0xAA } else { 0x55 } 
-        } else if i % 2 == 0 { 0x55 } else { 0xAA });
+        pattern_buffer.push(if (i / 16) % 2 == 0 {
+            if i % 2 == 0 {
+                Flag::AUTO_WRITE_PATTERN_CHECKERBOARD1
+            } else {
+                Flag::AUTO_WRITE_PATTERN_CHECKERBOARD2
+            }
+        } else if i % 2 == 0 {
+            Flag::AUTO_WRITE_PATTERN_CHECKERBOARD2
+        } else {
+            Flag::AUTO_WRITE_PATTERN_CHECKERBOARD1
+        });
     }
-    
+
     // Fill remaining with border pattern
     for i in pattern_buffer.len()..4736 {
         // Create a border pattern - all black with white border
-        let x = (i % 148) / 8;  // X position in bytes (0-15)
-        let y = i / 148;       // Y position
-        
+        let x = (i % 148) / 8; // X position in bytes (0-15)
+        let y = i / 148; // Y position
+
         if x == 0 || x == 15 || !(4..=291).contains(&y) {
-            pattern_buffer.push(0xFF); // White border
+            pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_WHITE); // White border
         } else {
-            pattern_buffer.push(0x00); // Black center
+            pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_BLACK); // Black center
         }
     }
 
     // Send pattern in chunks to avoid watchdog timeouts
     log::info!("Sending checkerboard pattern in chunks");
     const CHUNK_SIZE: usize = 64; // Send 64 bytes at a time
-    
+
     for (i, chunk) in pattern_buffer.chunks(CHUNK_SIZE).enumerate() {
         // Log progress occasionally
         if i % 10 == 0 {
             log::info!("Sending chunk {}/{}", i, pattern_buffer.len() / CHUNK_SIZE);
         }
-        
+
         // Send this chunk
         if let Err(e) = ssd1680.direct_data(chunk) {
             log::error!("Failed to write pattern chunk: {:?}", e);
             return Err(anyhow::anyhow!("Failed to write pattern chunk: {:?}", e));
         }
-        
+
         // Brief pause every 10 chunks to avoid watchdog timeouts
         if i % 10 == 9 {
             // Just a small yield to let the watchdog reset
-            for _ in 0..1000 { core::hint::spin_loop(); }
+            for _ in 0..1000 {
+                core::hint::spin_loop();
+            }
         }
     }
 

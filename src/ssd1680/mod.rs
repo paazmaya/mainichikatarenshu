@@ -29,8 +29,8 @@
 pub mod color;
 pub mod driver;
 
-mod cmd;
-mod flag;
+pub mod cmd;
+pub mod flag;
 pub mod graphics;
 
 /// Maximum display height this driver supports

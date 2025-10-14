@@ -1,5 +1,9 @@
 /// Various flags and constants used in the SSD1680 e-paper display driver.
+///
+/// This struct contains all the flag values and constants for configuring the SSD1680 controller.
+/// All constants are documented inline with their respective values.
 pub struct Flag;
+#[allow(missing_docs)]
 impl Flag {
     pub const DISPLAY_MODE_1: u8 = 0xF7;
 

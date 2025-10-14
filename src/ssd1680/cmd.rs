@@ -1,3 +1,7 @@
+/// SSD1680 command constants
+///
+/// This struct contains all the command codes for the SSD1680 e-paper display controller.
+/// Commands are organized by their function and documented according to the SSD1680 datasheet.
 pub struct Cmd;
 impl Cmd {
     /// Driver Output Control (0x01)
