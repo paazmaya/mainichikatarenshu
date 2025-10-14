@@ -34,9 +34,11 @@ pub mod flag;
 pub mod graphics;
 
 /// Maximum display height this driver supports
+#[allow(dead_code)]
 pub const MAX_HEIGHT: u16 = 296;
 
 /// Maximum display width this driver supports
+#[allow(dead_code)]
 pub const MAX_WIDTH: u16 = 176;
 
 /// Display height, pixels vertically

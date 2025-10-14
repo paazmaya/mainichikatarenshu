@@ -39,6 +39,7 @@ where
     ];
 
     /// Fast update LUT values for SSD1680 (quicker refresh but may have ghosting)
+    #[allow(dead_code)]
     const LUT_FAST_UPDATE: [u8; 70] = [
         0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT0: Black
         0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // LUT1: White
@@ -198,11 +199,11 @@ where
     }
 
     /// Wake up the device if it is in sleep mode
-    pub fn wake_up(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn wake_up(&mut self, _delay: &mut impl DelayNs) -> Result<(), DisplayError> {
         log::info!("Waking up the device");
         self.interface
             .cmd_with_data(Cmd::DEEP_SLEEP_MODE, &[Flag::DEEP_SLEEP_NORMAL_MODE])?;
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
         Ok(())
     }
 
@@ -212,7 +213,7 @@ where
 
         // Before starting a new update, make sure the display is idle
         // Some displays need this check to avoid conflicts
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Different display update sequence based on SSD1680 datasheet
 
@@ -241,7 +242,7 @@ where
         delay.delay_ms(300); // Longer delay to ensure update starts properly
 
         // 4. Wait for display to be ready
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // 5. Send NOP to terminate the update sequence
         self.interface.cmd(Cmd::NOP)?;
@@ -454,7 +455,7 @@ where
         log::info!("Drawing simple split-screen test pattern (half black, half white)");
 
         // Ensure display is ready before starting
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Setup the RAM window to cover the whole display
         self.use_full_frame()?;
@@ -592,7 +593,7 @@ where
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xB1])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Write temperature parameter
         log::info!("Fast update step 2: Write temperature parameter");
@@ -604,14 +605,14 @@ where
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0x91])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Third update sequence: 0xC7
         log::info!("Fast update step 4: Final update with 0xC7");
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xC7])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("Fast update sequence completed");
         Ok(())
@@ -637,14 +638,14 @@ where
         // Driver output control - 296 gate lines (critical for 2.9")
         log::info!("Setting driver control");
         // Try original values first
-        self.interface.cmd(Cmd::DRIVER_CONTROL)?;
-        self.interface.data(&[0x27, 0x01, 0x00])?; // 296 lines, normal scan
+        self.interface
+            .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?; // 296 lines, normal scan
         delay.delay_ms(100);
 
         // Data entry mode
         log::info!("Setting data entry mode");
-        self.interface.cmd(Cmd::DATA_ENTRY_MODE)?;
-        self.interface.data(&[0x03])?; // Y+, X+
+        self.interface
+            .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
         delay.delay_ms(100);
 
         // Step 3: Try display update and RAM clear without LUT settings
@@ -742,7 +743,7 @@ where
         // Longer delay to give display time to update
         log::info!("Waiting for first update to complete");
         delay.delay_ms(500);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
         delay.delay_ms(200); // Additional delay after reaching idle
 
         // Method 2: Alternative update sequence
@@ -755,7 +756,7 @@ where
         // Long delay for display to update
         log::info!("Waiting for second update to complete");
         delay.delay_ms(500);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Final stability delay
         delay.delay_ms(300);
@@ -920,7 +921,7 @@ where
         // Long wait for display to update
         log::info!("Waiting for display update to complete");
         delay.delay_ms(500);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Second attempt with different update settings in case the first didn't work
         log::info!("Update method 2: Alternative update sequence");
@@ -935,7 +936,7 @@ where
         // Another long wait
         log::info!("Waiting for second update to complete");
         delay.delay_ms(500);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         // Final stability delay
         delay.delay_ms(300);
@@ -964,13 +965,8 @@ where
         self.interface.cmd(Cmd::SW_RESET)?;
         delay.delay_ms(200); // Extended delay after reset
 
-        // Check device is responding
-        log::info!("Reading status register to verify device is responding");
-        if let Ok(status) = self.interface.read_status_register() {
-            log::info!("Status register response: 0x{:02X}", status);
-        } else {
-            log::warn!("Failed to read status register - device may not be responding");
-        }
+        // Device should be responding after reset
+        log::info!("Device reset complete");
 
         // Driver output control - CRITICAL SETTING FOR 2.9" DISPLAY WITH 296 GATE LINES
         log::info!("Setting driver control for 2.9-inch (296 gate lines)");
@@ -1061,7 +1057,7 @@ where
 
         // Wait for everything to stabilize
         log::info!("Waiting for stabilization");
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("Revised 2.9-inch init sequence completed successfully");
         Ok(())
@@ -1401,7 +1397,7 @@ where
         delay.delay_ms(500); // Pre-wait delay
 
         // Check busy status
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("Direct clear operation completed, display should now be white");
         Ok(())
@@ -1524,7 +1520,7 @@ where
 
         log::info!("Waiting for update to complete");
         delay.delay_ms(1000);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("White pattern should now be visible");
         delay.delay_ms(3000);
@@ -1559,7 +1555,7 @@ where
 
         log::info!("Waiting for update to complete");
         delay.delay_ms(1000);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("Black pattern should now be visible");
         delay.delay_ms(3000);
@@ -1600,7 +1596,7 @@ where
 
         log::info!("Waiting for update to complete");
         delay.delay_ms(1000);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("Checkerboard pattern should now be visible");
         delay.delay_ms(3000);
@@ -1628,7 +1624,7 @@ where
 
         log::info!("Waiting for update to complete");
         delay.delay_ms(1000);
-        self.interface.wait_until_idle(delay)?;
+        self.interface.wait_busy_low();
 
         log::info!("Auto pattern should now be visible");
 
@@ -1745,9 +1741,8 @@ where
         }
 
         // Update display
-        log::info!("Updating display");
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
-        self.interface.data(&[Flag::DISPLAY_UPDATE_FULL])?; // Arduino uses 0xF4 for full refresh
+        self.interface.data(&[Flag::DISPLAY_UPDATE_FULL])?;
 
         // Add a small delay between commands
         for _ in 0..1000 {
@@ -1755,11 +1750,8 @@ where
         }
 
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
+        self.interface.wait_busy_low();
 
-        log::info!("Waiting for display update to complete");
-        self.interface.wait_busy_low(); // Arduino's EPD_READBUSY
-
-        log::info!("Arduino-compatible display image complete");
         Ok(())
     }
 }

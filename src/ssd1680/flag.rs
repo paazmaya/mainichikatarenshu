@@ -4,6 +4,7 @@
 /// All constants are documented inline with their respective values.
 pub struct Flag;
 #[allow(missing_docs)]
+#[allow(dead_code)]
 impl Flag {
     pub const DISPLAY_MODE_1: u8 = 0xF7;
 

@@ -1,4 +1,3 @@
-use image::GenericImageView;
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -116,9 +115,10 @@ fn convert_image_to_binary(
                 255
             };
 
-            // If pixel is darker than threshold, set bit to 1 (black)
-            // Otherwise leave as 0 (white)
-            if brightness < threshold {
+            // INVERTED: If pixel is LIGHTER than threshold, set bit to 1 (black)
+            // This inverts the image: white background becomes black, black content becomes white
+            // For e-paper: bit 1 = black, bit 0 = white
+            if brightness >= threshold {
                 let byte_index = (y * bytes_per_row + x / 8) as usize;
                 let bit_index = 7 - (x % 8);
                 buffer[byte_index] |= 1 << bit_index;

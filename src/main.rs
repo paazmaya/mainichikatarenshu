@@ -2,24 +2,20 @@ use anyhow::Ok;
 
 use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
 use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::primitives::Line;
-use embedded_graphics::primitives::PrimitiveStyle;
-use embedded_graphics::text::Alignment;
-use embedded_graphics::text::TextStyleBuilder;
 use embedded_graphics::{prelude::*, text::Text};
 
 mod ssd1680;
 
 pub use crate::ssd1680::cmd::Cmd;
 pub use crate::ssd1680::color::Color;
+
 pub use crate::ssd1680::driver::Ssd1680;
 pub use crate::ssd1680::flag::Flag;
 
 pub use crate::ssd1680::graphics::{Display, Display2in13, DisplayRotation};
 // https://docs.rs/embedded-graphics/0.8.1/embedded_graphics/mono_font/index.html#modules
 use embedded_graphics::mono_font::{
-    iso_8859_15::FONT_10X20 as ISO15_10, jis_x0201::FONT_9X15 as JIS_9, MonoTextStyle,
-    MonoTextStyleBuilder,
+    iso_8859_15::FONT_10X20 as ISO15_10, MonoTextStyle, MonoTextStyleBuilder,
 };
 
 use esp_idf_svc::hal::delay::Delay;
@@ -330,295 +326,7 @@ fn main() -> anyhow::Result<()> {
         delay.delay_ms(10000);
     }
 
-    // Original test follows
-    log::info!("\n\n=== ARDUINO CLEAR TO WHITE ===");
-    if let Err(e) = ssd1680.direct_cmd(Cmd::BORDER_WAVEFORM_CONTROL) {
-        log::error!("Failed to set border waveform: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to set border waveform: {:?}", e));
-    }
-    if let Err(e) = ssd1680.direct_data(&[Flag::BORDER_WAVEFORM_WHITE]) {
-        log::error!("Failed to set border data: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to set border data: {:?}", e));
-    }
-
-    // Fill RAM with WHITE - trying 0x00 since display shows inverted (0xFF showed as black)
-    log::info!("Filling RAM with WHITE (0x00) pixels - display polarity appears inverted");
-    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
-        log::error!("Failed to send write command: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to send write command: {:?}", e));
-    }
-
-    // Create a buffer to send in chunks more efficiently
-    let white_buffer = vec![Flag::AUTO_WRITE_PATTERN_ALL_BLACK; 64]; // All WHITE (using black pattern - inverted polarity)
-
-    for i in 0..(4736 / 64) {
-        if i % 10 == 0 {
-            log::info!("Sending chunk {}/{}", i, 4736 / 64);
-        }
-
-        if let Err(e) = ssd1680.direct_data(&white_buffer) {
-            log::error!("Failed to write white data: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to write white data: {:?}", e));
-        }
-    }
-
-    // Send any remaining bytes
-    let remaining = 4736 % 64;
-    if remaining > 0 {
-        if let Err(e) = ssd1680.direct_data(&white_buffer[0..remaining]) {
-            log::error!("Failed to write remaining white data: {:?}", e);
-            return Err(anyhow::anyhow!(
-                "Failed to write remaining white data: {:?}",
-                e
-            ));
-        }
-    }
-
-    // Update display with proper sequence according to SSD1680 datasheet
-    log::info!("Updating display with white - using proper update sequence");
-
-    // Step 1: Specify which RAM to use for update - ONLY use BW RAM (0x24)
-    if let Err(e) = ssd1680.direct_cmd(Cmd::DISPLAY_UPDATE_CTRL1) {
-        log::error!("Failed to set display update control 1: {:?}", e);
-        return Err(anyhow::anyhow!(
-            "Failed to set display update control 1: {:?}",
-            e
-        ));
-    }
-    if let Err(e) = ssd1680.direct_data(&[Flag::DISPLAY_UPDATE_BW_RAM]) {
-        // Use only BW RAM
-        log::error!("Failed to set RAM usage: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to set RAM usage: {:?}", e));
-    }
-
-    // Step 2: Set update control with working C++ value
-    if let Err(e) = ssd1680.direct_cmd(Cmd::DISPLAY_UPDATE_CTRL2) {
-        log::error!("Failed to set display update control 2: {:?}", e);
-        return Err(anyhow::anyhow!(
-            "Failed to set display update control 2: {:?}",
-            e
-        ));
-    }
-    if let Err(e) = ssd1680.direct_data(&[Flag::DISPLAY_UPDATE_FULL]) {
-        // Use full update sequence
-        log::error!("Failed to set update control: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to set update control: {:?}", e));
-    }
-
-    // Step 3: Activate display update
-    if let Err(e) = ssd1680.direct_cmd(Cmd::MASTER_ACTIVATE) {
-        log::error!("Failed to activate display update: {:?}", e);
-        return Err(anyhow::anyhow!(
-            "Failed to activate display update: {:?}",
-            e
-        ));
-    }
-
-    // CRITICAL: Wait for BUSY pin to go LOW (display update takes ~2 seconds)
-    log::info!("Waiting for display update to complete (BUSY pin)...");
-    ssd1680.wait_busy();
-
-    log::info!("Cleared to white. Waiting 3 seconds...");
     delay.delay_ms(3000);
-
-    // Clear register 0x26 (RED RAM) with WHITE (0xFF) for proper operation
-    log::info!("Clearing register 0x26 (RED RAM) with WHITE (0xFF)");
-    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_RED_DATA) {
-        log::error!("Failed to select RAM: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to select RAM: {:?}", e));
-    }
-
-    // Create a simple test pattern (checkerboard)
-    log::info!("\n\n=== ARDUINO TEST PATTERN ===");
-    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
-        log::error!("Failed to select RAM for pattern: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to select RAM for pattern: {:?}", e));
-    }
-
-    // Create a test pattern with multiple elements to help with diagnosis
-    log::info!("Creating comprehensive test pattern buffer");
-    let mut pattern_buffer = Vec::with_capacity(4736);
-
-    // First 592 bytes (4 rows): Solid black
-    for _ in 0..592 {
-        pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_BLACK);
-    }
-
-    // Next 592 bytes (4 rows): Solid white
-    for _ in 0..592 {
-        pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_WHITE);
-    }
-
-    // Next 592 bytes (4 rows): Horizontal stripes
-    for i in 0..592 {
-        pattern_buffer.push(if (i / 16) % 2 == 0 {
-            Flag::AUTO_WRITE_PATTERN_ALL_WHITE
-        } else {
-            Flag::AUTO_WRITE_PATTERN_ALL_BLACK
-        });
-    }
-
-    // Next 592 bytes (4 rows): Vertical stripes
-    for _ in 0..592 {
-        pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_CHECKERBOARD1); // 10101010 pattern
-    }
-
-    // Next 592 bytes (4 rows): Checkerboard
-    for i in 0..592 {
-        pattern_buffer.push(if (i / 16) % 2 == 0 {
-            if i % 2 == 0 {
-                Flag::AUTO_WRITE_PATTERN_CHECKERBOARD1
-            } else {
-                Flag::AUTO_WRITE_PATTERN_CHECKERBOARD2
-            }
-        } else if i % 2 == 0 {
-            Flag::AUTO_WRITE_PATTERN_CHECKERBOARD2
-        } else {
-            Flag::AUTO_WRITE_PATTERN_CHECKERBOARD1
-        });
-    }
-
-    // Fill remaining with border pattern
-    for i in pattern_buffer.len()..4736 {
-        // Create a border pattern - all black with white border
-        let x = (i % 148) / 8; // X position in bytes (0-15)
-        let y = i / 148; // Y position
-
-        if x == 0 || x == 15 || !(4..=291).contains(&y) {
-            pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_WHITE); // White border
-        } else {
-            pattern_buffer.push(Flag::AUTO_WRITE_PATTERN_ALL_BLACK); // Black center
-        }
-    }
-
-    // Send pattern in chunks to avoid watchdog timeouts
-    log::info!("Sending checkerboard pattern in chunks");
-    const CHUNK_SIZE: usize = 64; // Send 64 bytes at a time
-
-    for (i, chunk) in pattern_buffer.chunks(CHUNK_SIZE).enumerate() {
-        // Log progress occasionally
-        if i % 10 == 0 {
-            log::info!("Sending chunk {}/{}", i, pattern_buffer.len() / CHUNK_SIZE);
-        }
-
-        // Send this chunk
-        if let Err(e) = ssd1680.direct_data(chunk) {
-            log::error!("Failed to write pattern chunk: {:?}", e);
-            return Err(anyhow::anyhow!("Failed to write pattern chunk: {:?}", e));
-        }
-
-        // Brief pause every 10 chunks to avoid watchdog timeouts
-        if i % 10 == 9 {
-            // Just a small yield to let the watchdog reset
-            for _ in 0..1000 {
-                core::hint::spin_loop();
-            }
-        }
-    }
-
-    // Update with the pattern
-    log::info!("Updating display with pattern");
-    if let Err(e) = ssd1680.direct_update_display() {
-        log::error!("Failed to update with pattern: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to update with pattern: {:?}", e));
-    }
-
-    log::info!("Test pattern displayed. Pausing 5 seconds...");
-    delay.delay_ms(5000);
-
-    // Success or failure summary
-    log::info!("\n\n======================================================");
-    log::info!("DISPLAY TEST SEQUENCE COMPLETED");
-    log::info!("If the display is still blank after all these attempts:");
-    log::info!("1. Check hardware connections (especially RST, DC, BUSY, SPI)");
-    log::info!("2. Verify power supply to the e-paper display");
-    log::info!("3. The display may be incompatible or damaged");
-    log::info!("======================================================");
-    delay.delay_ms(3000);
-
-    // Now create text display if test pattern worked
-    log::info!("Creating text display buffer");
-    let mut display = Display2in13::new();
-    display.set_rotation(DisplayRotation::Rotate90);
-
-    // Clear text display buffer first
-    display
-        .clear(BinaryColor::Off)
-        .expect("Failed to clear buffer");
-
-    log::info!("Drawing text 1");
-    // Try with inverted colors (Off=black on e-paper) in case display is inverting colors
-    let style1 = MonoTextStyle::new(&ISO15_10, BinaryColor::Off);
-    let text = Text::new("TEST PATTERN 1", Point::new(4, 30), style1);
-    text.draw(&mut display).expect("Failed to draw text");
-
-    log::info!("Drawing text 2");
-    let style2 = MonoTextStyleBuilder::new()
-        .font(&ISO15_10)
-        .text_color(BinaryColor::Off) // Inverted color
-        .build();
-    Text::new("TEST PATTERN 2", Point::new(4, 60), style2)
-        .draw(&mut display)
-        .expect("Failed to draw text");
-
-    log::info!("Drawing text 3");
-    let style3 = MonoTextStyleBuilder::new()
-        .font(&JIS_9)
-        .text_color(BinaryColor::Off) // Inverted color
-        .build();
-    Text::new("TEST PATTERN 3", Point::new(4, 90), style3)
-        .draw(&mut display)
-        .expect("Failed to draw text");
-
-    // Display updated frame
-    // Add a functionality to test the display with a pattern if needed
-    let test_pattern_fallback = true; // Change to true to try the test pattern instead
-
-    if test_pattern_fallback {
-        log::info!("Using test pattern instead of text display");
-
-        // First clear the frame
-        ssd1680
-            .clear_frame(&mut delay)
-            .expect("Failed to clear frame");
-
-        // Then draw the test pattern
-        log::info!("Drawing test pattern");
-        ssd1680
-            .draw_test_pattern(&mut delay)
-            .expect("Failed to draw test pattern");
-
-        log::info!("Test pattern should be visible on display");
-    } else {
-        log::info!("Update frame");
-        ssd1680
-            .update_frame(display.buffer())
-            .expect("Failed to update black and white frame");
-
-        log::info!("Display frame");
-
-        // Use proper error handling with a panic message that includes the error
-        if let Err(e) = ssd1680.display_frame(&mut delay) {
-            log::error!("Failed to update display: {:?}", e);
-
-            // Try the test pattern as a fallback
-            log::info!("Attempting fallback to test pattern...");
-            if let Err(e2) = ssd1680.draw_test_pattern(&mut delay) {
-                log::error!("Test pattern also failed: {:?}", e2);
-                panic!("Display update failed with all methods");
-            } else {
-                log::info!("Test pattern displayed successfully as fallback");
-            }
-        } else {
-            log::info!("Display frame updated successfully");
-        }
-    }
-
-    // Add a pause to let the display stabilize
-    log::info!("Pausing to allow display stabilization");
-    delay.delay_ms(1000);
-
-    log::info!("Display update complete!");
 
     let wakeup_reason = esp_idf_svc::hal::reset::WakeupReason::get();
     log::info!("Wakeup reason: {:?}", wakeup_reason);
@@ -681,20 +389,31 @@ fn main_k() -> ! {
 */
 
 // External buttons and their GPIO pin numbers
+#[allow(dead_code)]
 const BTN_EXIT: u8 = 1;
+#[allow(dead_code)]
 const BTN_MENU: u8 = 2;
+#[allow(dead_code)]
 const BTN_UP: u8 = 6;
+#[allow(dead_code)]
 const BTN_DOWN: u8 = 4;
+#[allow(dead_code)]
 const BTN_CONF: u8 = 5;
+#[allow(dead_code)]
 const BTN_RESET: u8 = 3;
 
 // Other useful pins
+#[allow(dead_code)]
 const PIN_POWER_LED: u8 = 41;
 
 // TF card pins
+#[allow(dead_code)]
 const TFC_CS: u8 = 10;
+#[allow(dead_code)]
 const TFC_MOSI: u8 = 40;
+#[allow(dead_code)]
 const TFC_MISO: u8 = 13;
+#[allow(dead_code)]
 const TFC_CLK: u8 = 39;
 /*
 // Go look at
@@ -703,48 +422,3 @@ fn connect_to_sdcard((peripherals: &Peripherals) -> ! {
     let cs = peripherals.pins.gpio10;
 }
 */
-
-fn draw_rotation_and_rulers(display: &mut Display2in13) {
-    display.set_rotation(DisplayRotation::Rotate0);
-    draw_text(display, "rotation 0", 50, 35);
-    draw_ruler(display);
-
-    display.set_rotation(DisplayRotation::Rotate90);
-    draw_text(display, "rotation 90", 50, 35);
-    draw_ruler(display);
-
-    display.set_rotation(DisplayRotation::Rotate180);
-    draw_text(display, "rotation 180", 50, 35);
-    draw_ruler(display);
-
-    display.set_rotation(DisplayRotation::Rotate270);
-    draw_text(display, "rotation 270", 50, 35);
-    draw_ruler(display);
-}
-
-fn draw_ruler(display: &mut Display2in13) {
-    for col in 1..ssd1680::WIDTH {
-        if col % 25 == 0 {
-            Line::new(Point::new(col as i32, 0), Point::new(col as i32, 10))
-                .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
-                .draw(display)
-                .unwrap();
-        }
-
-        if col % 50 == 0 {
-            let label = col.to_string();
-            draw_text(display, &label, col as i32, 20);
-        }
-    }
-}
-
-fn draw_text(display: &mut Display2in13, text: &str, x: i32, y: i32) {
-    let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
-    let _ = Text::with_text_style(
-        text,
-        Point::new(x, y),
-        style,
-        TextStyleBuilder::new().alignment(Alignment::Center).build(),
-    )
-    .draw(display);
-}
