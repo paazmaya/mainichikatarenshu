@@ -1,9 +1,5 @@
 //! B/W Color for EPDs
 
-use embedded_graphics::pixelcolor::BinaryColor;
-
-
-
 /// Black/White colors
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Color {

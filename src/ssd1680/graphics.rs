@@ -6,8 +6,7 @@ use display_interface::DisplayError;
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 
 /// Displayrotation
-#[derive(Clone, Copy)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub enum DisplayRotation {
     /// No rotation
     #[default]
@@ -19,7 +18,6 @@ pub enum DisplayRotation {
     /// Rotate 270 degrees clockwise
     Rotate270,
 }
-
 
 /// Necessary traits for all displays to implement for drawing
 ///
@@ -226,7 +224,7 @@ fn find_rotation(x: u32, y: u32, width: u32, height: u32, rotation: DisplayRotat
 fn find_position(x: u32, y: u32, width: u32, height: u32, rotation: DisplayRotation) -> (u32, u8) {
     let (nx, ny) = find_rotation(x, y, width, height, rotation);
     (
-        nx / 8 + ((width + 7) / 8) * ny,
+        nx / 8 + width.div_ceil(8) * ny,
         0x80 >> (nx % 8),
     )
 }
@@ -235,7 +233,7 @@ fn find_position(x: u32, y: u32, width: u32, height: u32, rotation: DisplayRotat
 /// is not divisible by 8.
 #[must_use]
 const fn buffer_len(width: usize, height: usize) -> usize {
-    (width + 7) / 8 * height
+    width.div_ceil(8) * height
 }
 
 #[cfg(test)]

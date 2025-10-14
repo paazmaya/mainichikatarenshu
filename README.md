@@ -179,7 +179,7 @@ Wrote 22352 bytes (14245 compressed) at 0x00000000 in 0.6 seconds (effective 298
 Hash of data verified.
 ```
 
-For a full day I was flashing and flashing, changing configuraytion in ESP-IDF project, but once flashing with
+For a full day I was flashing and flashing, changing configuration in ESP-IDF project, but once flashing with
 `espflash`, the ouput told that the older bootloader was still being used.
 
 Finally it turned out that espflash has its own bootloader provided when not using esp-idf-sys package in the project.
@@ -403,7 +403,11 @@ to be promising ones, the latter being used at https://github.com/mbv/esp32-ssd1
 
 None of the drivers seemed fit, since the commands they used were not matching the ones in Arduino examples by Elecrow
 
+Writing my own driver based on mbv/ssd1680
 
+Replaced package `espflash v3.3.0` with `espflash v4.2.0` (executable `espflash.exe`)
+
+After a long battle of comparing a working Arduino example and the Rust driver, finally got the screen to show something.
 
 ## License
 

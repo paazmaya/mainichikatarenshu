@@ -39,10 +39,10 @@ pub const MAX_HEIGHT: u16 = 296;
 /// Maximum display width this driver supports
 pub const MAX_WIDTH: u16 = 176;
 
-/// Display height
-pub const HEIGHT: u8 = 255; //296;
+/// Display height, pixels vertically
+pub const HEIGHT: u16 = 296;
 
-/// Display width
-pub const WIDTH: u8 = 128;
+/// Display width, pixels horizontally
+pub const WIDTH: u16 = 128;
 
 pub mod interface;
