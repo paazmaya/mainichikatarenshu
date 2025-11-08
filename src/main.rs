@@ -138,7 +138,7 @@ fn main() -> anyhow::Result<()> {
     power_pin.set_high().expect("Failed to set power pin high");
 
     // Create delay for timing
-    let mut delay = Delay::default();
+    let delay = Delay::default();
     delay.delay_ms(100); // Wait for power to stabilize
 
     // Create driver with standard initialization first

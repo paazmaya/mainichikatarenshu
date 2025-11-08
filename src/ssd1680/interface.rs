@@ -2,7 +2,7 @@
 use crate::ssd1680::{cmd::Cmd, flag::Flag};
 use display_interface::DisplayError;
 use embedded_hal::{
-    delay::{self, DelayNs},
+    delay::DelayNs,
     digital::{InputPin, OutputPin},
     spi::SpiDevice,
 };
@@ -43,6 +43,42 @@ where
     BSY: InputPin,
     DELAY: DelayNs,
 {
+    // ==================== Helper Functions for Common Patterns ====================
+
+    /// Send command with data and delay
+    fn cmd_with_data_and_delay(
+        &mut self,
+        command: u8,
+        data: &[u8],
+        delay_ms: u32,
+    ) -> Result<(), DisplayError> {
+        self.cmd_with_data(command, data)?;
+        self.delay.delay_ms(delay_ms);
+        Ok(())
+    }
+
+    /// Set DC pin high (for data mode)
+    fn set_dc_high(&mut self) -> Result<(), DisplayError> {
+        self.dc.set_high().map_err(|_| DisplayError::DCError)
+    }
+
+    /// Set DC pin low (for command mode)
+    fn set_dc_low(&mut self) -> Result<(), DisplayError> {
+        self.dc.set_low().map_err(|_| DisplayError::DCError)
+    }
+
+    /// Set RST pin high
+    fn set_rst_high(&mut self) -> Result<(), DisplayError> {
+        self.rst.set_high().map_err(|_| DisplayError::RSError)
+    }
+
+    /// Set RST pin low
+    fn set_rst_low(&mut self) -> Result<(), DisplayError> {
+        self.rst.set_low().map_err(|_| DisplayError::RSError)
+    }
+
+    // ==================== End of Helper Functions ====================
+
     /// Initialize display using the exact Arduino initialization sequence - EXACTLY matching EPD_Init
     pub(crate) fn init(&mut self) -> Result<(), DisplayError> {
         log::info!("Initializing e-paper display with SSD1680 datasheet sequence");
@@ -57,34 +93,32 @@ where
         self.delay.delay_ms(10);
 
         // Step 1: Driver Output Control
-        self.cmd_with_data(
+        self.cmd_with_data_and_delay(
             Cmd::DRIVER_CONTROL,
             &[
                 0x27,                                    // MUX gates = 296 (0x127+1) lines for 2.9" display
                 Flag::DRIVER_OUTPUT_GATE_SCAN_FROM_GN,   // GS=1 (gate scan from G0 to G(N-1))
                 Flag::DRIVER_OUTPUT_SOURCE_NORMAL_COLOR, // SM=0, TB=0 (normal color)
             ],
+            10,
         )?;
-        self.delay.delay_ms(10);
 
         // Step 2: Set data entry mode - critical for proper pixel mapping
-        self.cmd_with_data(Cmd::DATA_ENTRY_MODE, &[Flag::DATA_ENTRY_INCRY_INCRX])?; // X-increment, Y-increment mode
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(Cmd::DATA_ENTRY_MODE, &[Flag::DATA_ENTRY_INCRY_INCRX], 10)?; // X-increment, Y-increment mode
 
         // Step 3: Set RAM X/Y window to match display size
         // X window: 0..15 (16 bytes wide = 128 pixels / 8)
-        self.cmd_with_data(Cmd::SET_RAMX_START_END, &[0x00, 0x0F])?;
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(Cmd::SET_RAMX_START_END, &[0x00, 0x0F], 10)?;
 
         // Y window: 0..295
-        self.cmd_with_data(
+        self.cmd_with_data_and_delay(
             Cmd::SET_RAMY_START_END,
             &[
                 0x00, 0x00, // Y start = 0
                 0x27, 0x01, // Y end = 0x0127 = 295
             ],
+            10,
         )?;
-        self.delay.delay_ms(10);
 
         // Step 4: Set RAM X/Y position to start at (0,0)
         self.cmd_with_data(Cmd::SET_RAMX_COUNTER, &[0x00])?; // X position = 0
@@ -93,34 +127,37 @@ where
         self.delay.delay_ms(10);
 
         // Step 5: Set Border Waveform
-        self.cmd_with_data(Cmd::BORDER_WAVEFORM_CONTROL, &[Flag::BORDER_WAVEFORM_WHITE])?; // White border
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(
+            Cmd::BORDER_WAVEFORM_CONTROL,
+            &[Flag::BORDER_WAVEFORM_WHITE],
+            10,
+        )?; // White border
 
         // Step 6: Set up temperature sensor
-        self.cmd_with_data(Cmd::TEMP_CONTROL, &[Flag::INTERNAL_TEMP_SENSOR])?; // Internal temperature sensor
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(Cmd::TEMP_CONTROL, &[Flag::INTERNAL_TEMP_SENSOR], 10)?; // Internal temperature sensor
 
         // Step 7: Set booster configuration for better reliability
-        self.cmd_with_data(
+        self.cmd_with_data_and_delay(
             Cmd::BOOST_SOFT_START_CONTROL,
             &[
                 Flag::BOOSTER_SOFT_START_PHASE1_DEFAULT,
                 Flag::BOOSTER_SOFT_START_PHASE2_DEFAULT,
                 Flag::BOOSTER_SOFT_START_PHASE3_DEFAULT,
             ],
+            10,
         )?; // Default values from datasheet
-        self.delay.delay_ms(10);
 
         // Step 8: Set gate/source voltages for display stability
-        self.cmd_with_data(Cmd::GATE_VOLTAGE_CONTROL, &[Flag::GATE_VOLTAGE_VGH_DEFAULT])?; // VGH=15V
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(
+            Cmd::GATE_VOLTAGE_CONTROL,
+            &[Flag::GATE_VOLTAGE_VGH_DEFAULT],
+            10,
+        )?; // VGH=15V
 
-        self.cmd_with_data(Cmd::SOURCE_VOLTAGE_CONTROL, &[0x02, 0x0C, 0x0C])?; // VSH/VSL values for good contrast
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(Cmd::SOURCE_VOLTAGE_CONTROL, &[0x02, 0x0C, 0x0C], 10)?; // VSH/VSL values for good contrast
 
         // Step 9: Set VCOM value (critical for display quality)
-        self.cmd_with_data(Cmd::WRITE_VCOM_REGISTER, &[Flag::VCOM_DEFAULT])?; // VCOM = -1.4V
-        self.delay.delay_ms(10);
+        self.cmd_with_data_and_delay(Cmd::WRITE_VCOM_REGISTER, &[Flag::VCOM_DEFAULT], 10)?; // VCOM = -1.4V
 
         // Final wait for any pending operations
         self.wait_busy_low();
@@ -132,7 +169,7 @@ where
     /// Basic function for sending commands
     pub(crate) fn cmd(&mut self, command: u8) -> Result<(), DisplayError> {
         // low for commands
-        self.dc.set_low().map_err(|_| DisplayError::DCError)?;
+        self.set_dc_low()?;
 
         // Transfer the command over spi with error handling
         match self.spi.write(&[command]) {
@@ -147,7 +184,7 @@ where
     /// Basic function for sending an array of u8-values of data over spi
     pub(crate) fn data(&mut self, data: &[u8]) -> Result<(), DisplayError> {
         // high for data
-        self.dc.set_high().map_err(|_| DisplayError::DCError)?;
+        self.set_dc_high()?;
         self.spi
             .write(data)
             .map_err(|_| DisplayError::BusWriteError)
@@ -163,7 +200,7 @@ where
     /// Used for setting one color for the whole frame
     pub(crate) fn data_x_times(&mut self, val: u8, repetitions: u32) -> Result<(), DisplayError> {
         // high for data
-        self.dc.set_high().map_err(|_| DisplayError::DCError)?;
+        self.set_dc_high()?;
 
         // Use a buffer to send multiple bytes at once for better efficiency
         // This reduces SPI overhead and prevents watchdog timeouts
@@ -234,11 +271,11 @@ where
     /// Resets the device with the exact Arduino reset sequence - EXACTLY matching EPD_HW_RESET
     pub(crate) fn reset(&mut self) -> Result<(), DisplayError> {
         // Exactly matching Arduino EPD_HW_RESET function
-        self.rst.set_high().map_err(|_| DisplayError::RSError)?;
+        self.set_rst_high()?;
         self.delay.delay_ms(20);
-        self.rst.set_low().map_err(|_| DisplayError::RSError)?;
+        self.set_rst_low()?;
         self.delay.delay_ms(2);
-        self.rst.set_high().map_err(|_| DisplayError::RSError)?;
+        self.set_rst_high()?;
         self.delay.delay_ms(20);
 
         // Don't wait for idle here - some displays might still show busy
