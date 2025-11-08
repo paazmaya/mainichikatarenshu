@@ -11,6 +11,7 @@ pub use crate::ssd1680::color::Color;
 
 pub use crate::ssd1680::driver::Ssd1680;
 pub use crate::ssd1680::flag::Flag;
+pub use crate::ssd1680::pins::Pins;
 
 pub use crate::ssd1680::graphics::{Display, Display2in13, DisplayRotation};
 // https://docs.rs/embedded-graphics/0.8.1/embedded_graphics/mono_font/index.html#modules
@@ -121,10 +122,10 @@ fn main() -> anyhow::Result<()> {
     log::info!("Configuring SPI with Arduino-compatible settings");
     let mut driver = spi::SpiDeviceDriver::new_single(
         peripherals.spi2,
-        pins.gpio12,                    // SCK - same as Arduino (pin 12)
-        pins.gpio11,                    // MOSI - same as Arduino (pin 11)
-        Option::<gpio::AnyIOPin>::None, // No MISO needed for display
-        Some(pins.gpio45),              // CS - same as Arduino (pin 45)
+        pins.gpio12,                                          // SCK - Pins::SCK
+        pins.gpio11,                                          // MOSI - Pins::MOSI
+        Option::<gpio::AnyIOPin>::None,                       // No MISO needed for display
+        Some(pins.gpio45),                                    // CS - Pins::CS
         &spi::SpiDriverConfig::new().dma(spi::Dma::Disabled), // Disable DMA to match Arduino's bit-banging
         &spi::SpiConfig::new().baudrate(200.kHz().into()), // Very low speed to match Arduino's bit-banging
                                                            // Note: Mode0 is default in esp-idf-hal, so we don't need to set it explicitly
@@ -144,10 +145,10 @@ fn main() -> anyhow::Result<()> {
     log::info!("Creating display driver with standard init");
     let mut ssd1680 = Ssd1680::new(
         &mut driver,
-        gpio::PinDriver::input(pins.gpio48).expect("Failed to set 48 busy pin as input"),
-        gpio::PinDriver::output(pins.gpio46).expect("Failed to set 46 dc pin as output"),
-        gpio::PinDriver::output(pins.gpio47).expect("Failed to set 47 rst pin as output"),
-        &mut delay,
+        gpio::PinDriver::input(pins.gpio48).expect("Failed to set busy pin as input"), // Pins::BSY
+        gpio::PinDriver::output(pins.gpio46).expect("Failed to set dc pin as output"), // Pins::DC
+        gpio::PinDriver::output(pins.gpio47).expect("Failed to set rst pin as output"), // Pins::RST
+        delay,
     )
     .expect("Could not create EPD driver");
 
@@ -158,7 +159,7 @@ fn main() -> anyhow::Result<()> {
 
     // Use EXACT Arduino EPD_Init() - minimal, matching Arduino exactly
     log::info!("\n\n=== EXACT ARDUINO EPD_Init() ===");
-    if let Err(e) = ssd1680.cpp_init(&mut delay) {
+    if let Err(e) = ssd1680.cpp_init() {
         log::error!("Arduino init failed: {:?}", e);
         return Err(anyhow::anyhow!("Arduino init failed: {:?}", e));
     }
@@ -173,14 +174,14 @@ fn main() -> anyhow::Result<()> {
     if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
         log::error!("Failed to fill with white: {:?}", e);
     }
-    delay.delay_ms(100);
+    ssd1680.interface.delay.delay_ms(100);
 
     // Step 2: EPD_Update() - Trigger display update with 0xF4
     log::info!("Step 2: EPD_Update() - Trigger display refresh");
     if let Err(e) = ssd1680.cpp_update() {
         log::error!("Failed to update display: {:?}", e);
     }
-    delay.delay_ms(100);
+    ssd1680.interface.delay.delay_ms(100);
 
     // Step 3: EPD_Clear_R26H() - Clear R26h AFTER update (not before!)
     log::info!("Step 3: EPD_Clear_R26H() - Clear RED RAM after update");
@@ -387,34 +388,6 @@ fn main_k() -> ! {
     loop {}
 }
 */
-
-// External buttons and their GPIO pin numbers
-#[allow(dead_code)]
-const BTN_EXIT: u8 = 1;
-#[allow(dead_code)]
-const BTN_MENU: u8 = 2;
-#[allow(dead_code)]
-const BTN_UP: u8 = 6;
-#[allow(dead_code)]
-const BTN_DOWN: u8 = 4;
-#[allow(dead_code)]
-const BTN_CONF: u8 = 5;
-#[allow(dead_code)]
-const BTN_RESET: u8 = 3;
-
-// Other useful pins
-#[allow(dead_code)]
-const PIN_POWER_LED: u8 = 41;
-
-// TF card pins
-#[allow(dead_code)]
-const TFC_CS: u8 = 10;
-#[allow(dead_code)]
-const TFC_MOSI: u8 = 40;
-#[allow(dead_code)]
-const TFC_MISO: u8 = 13;
-#[allow(dead_code)]
-const TFC_CLK: u8 = 39;
 /*
 // Go look at
 // https://github.com/esp-rs/esp-idf-svc/blob/master/examples/sd_spi.rs

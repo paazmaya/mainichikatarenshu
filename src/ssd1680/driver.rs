@@ -9,16 +9,18 @@ use crate::ssd1680::interface::DisplayInterface;
 use crate::ssd1680::{cmd::Cmd, color, flag::Flag, HEIGHT, WIDTH};
 
 /// A configured display with a hardware interface.
-pub struct Ssd1680<SPI, BSY, RST, DC> {
-    interface: DisplayInterface<SPI, BSY, RST, DC>,
+pub struct Ssd1680<SPI, BSY, RST, DC, DELAY> {
+    /// The display interface
+    pub interface: DisplayInterface<SPI, BSY, RST, DC, DELAY>,
 }
 
-impl<SPI, BSY, DC, RST> Ssd1680<SPI, BSY, DC, RST>
+impl<SPI, BSY, DC, RST, DELAY> Ssd1680<SPI, BSY, DC, RST, DELAY>
 where
     SPI: SpiDevice,
     RST: OutputPin,
     DC: OutputPin,
     BSY: InputPin,
+    DELAY: DelayNs,
 {
     /// Simplified LUT values for SSD1680 from known working implementations
     /// This is a minimal LUT that should work with most SSD1680 displays
@@ -56,24 +58,18 @@ where
     ];
 
     /// Create and initialize the display driver
-    pub fn new(
-        spi: SPI,
-        busy: BSY,
-        dc: DC,
-        rst: RST,
-        delay: &mut impl DelayNs,
-    ) -> Result<Self, DisplayError>
+    pub fn new(spi: SPI, busy: BSY, dc: DC, rst: RST, delay: DELAY) -> Result<Self, DisplayError>
     where
         Self: Sized,
     {
-        let interface = DisplayInterface::new(spi, busy, dc, rst);
+        let interface = DisplayInterface::new(spi, busy, dc, rst, delay);
         let mut ssd1680 = Ssd1680 { interface };
-        ssd1680.init(delay)?;
+        ssd1680.init()?;
         Ok(ssd1680)
     }
 
     /// Create a new instance from an existing interface without initialization
-    pub fn from_interface(interface: DisplayInterface<SPI, BSY, DC, RST>) -> Self
+    pub fn from_interface(interface: DisplayInterface<SPI, BSY, DC, RST, DELAY>) -> Self
     where
         Self: Sized,
     {
@@ -89,12 +85,12 @@ where
     }
 
     /// Initialise the controller with a more robust sequence
-    pub fn init(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn init(&mut self) -> Result<(), DisplayError> {
         log::info!("Starting full display initialization");
 
         // Hardware initialization - reset and basic setup
-        self.interface.init(delay)?;
-        delay.delay_ms(50); // Extra delay after hardware init
+        self.interface.init()?;
+        self.interface.delay.delay_ms(50); // Extra delay after hardware init
 
         // ----------------------
         // Power Configuration
@@ -109,28 +105,28 @@ where
                 Flag::BOOSTER_SOFT_START_PHASE3_DEFAULT,
             ],
         )?;
-        delay.delay_ms(10);
+        self.interface.delay.delay_ms(10);
 
         // Gate Driving Voltage
         self.interface.cmd_with_data(
             Cmd::GATE_VOLTAGE_CONTROL,
             &[Flag::GATE_VOLTAGE_VGH_DEFAULT], // 15V
         )?;
-        delay.delay_ms(10);
+        self.interface.delay.delay_ms(10);
 
         // Source Driving Voltage
         self.interface.cmd_with_data(
             Cmd::SOURCE_VOLTAGE_CONTROL,
             &[0x02, 0x0C, 0x0C], // VSH1/VSH2/VSL values
         )?;
-        delay.delay_ms(10);
+        self.interface.delay.delay_ms(10);
 
         // VCOM Control
         self.interface.cmd_with_data(
             Cmd::WRITE_VCOM_CONTROL_REGISTER,
             &[Flag::VCOM_DEFAULT], // Using moderate VCOM value: approximately -1.4V
         )?;
-        delay.delay_ms(10);
+        self.interface.delay.delay_ms(10);
 
         // ----------------------
         // RAM Area Configuration
@@ -138,7 +134,7 @@ where
 
         // Configure frame area to ensure proper display operation
         self.use_full_frame()?;
-        delay.delay_ms(10);
+        self.interface.delay.delay_ms(10);
 
         // ----------------------
         // LUT Configuration
@@ -146,7 +142,7 @@ where
 
         // Set the LUT - critical for proper display operation
         self.set_lut(&Self::LUT_FULL_UPDATE)?;
-        delay.delay_ms(50); // Give more time for LUT to load properly
+        self.interface.delay.delay_ms(50); // Give more time for LUT to load properly
 
         // ----------------------
         // Initial Display Pattern
@@ -199,7 +195,7 @@ where
     }
 
     /// Wake up the device if it is in sleep mode
-    pub fn wake_up(&mut self, _delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn wake_up(&mut self) -> Result<(), DisplayError> {
         log::info!("Waking up the device");
         self.interface
             .cmd_with_data(Cmd::DEEP_SLEEP_MODE, &[Flag::DEEP_SLEEP_NORMAL_MODE])?;
@@ -208,7 +204,7 @@ where
     }
 
     /// Display frame with all required steps to update the display
-    pub fn display_frame(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn display_frame(&mut self) -> Result<(), DisplayError> {
         log::info!("Starting display frame update process with improved sequence");
 
         // Before starting a new update, make sure the display is idle
@@ -219,27 +215,27 @@ where
 
         // Skip power on command as it's not defined in our command set
         // Instead just add a substantial delay before starting update sequence
-        delay.delay_ms(100); // Substantial delay before update sequence
+        self.interface.delay.delay_ms(100); // Substantial delay before update sequence
 
         // 1. Set display update control 1
         self.interface.cmd_with_data(
             Cmd::DISPLAY_UPDATE_CTRL1,
             &[Flag::DISPLAY_UPDATE_BW_RAM], // Update only B/W RAM for simpler operation
         )?;
-        delay.delay_ms(20); // Longer delay to ensure command is processed
+        self.interface.delay.delay_ms(20); // Longer delay to ensure command is processed
 
         // 2. Set display update control 2
         self.interface.cmd_with_data(
             Cmd::DISPLAY_UPDATE_CTRL2,
             &[Flag::DISPLAY_UPDATE_FULL], // Value from working C++ implementation
         )?;
-        delay.delay_ms(20); // Longer delay to ensure command is processed
+        self.interface.delay.delay_ms(20); // Longer delay to ensure command is processed
 
         // 3. Master activate - this actually triggers the display update
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         // Critical delay right after Master Activate - this is when the display begins updating
-        delay.delay_ms(300); // Longer delay to ensure update starts properly
+        self.interface.delay.delay_ms(300); // Longer delay to ensure update starts properly
 
         // 4. Wait for display to be ready
         self.interface.wait_busy_low();
@@ -248,14 +244,14 @@ where
         self.interface.cmd(Cmd::NOP)?;
 
         // Extra stabilization delay after display update completes
-        delay.delay_ms(200); // Longer stability delay
+        self.interface.delay.delay_ms(200); // Longer stability delay
 
         log::info!("Display frame update completed successfully");
         Ok(())
     }
 
     /// Make the whole black and white frame on the display driver white
-    pub fn clear_frame(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn clear_frame(&mut self) -> Result<(), DisplayError> {
         log::info!("Clearing frame to white");
         self.use_full_frame()?;
 
@@ -270,14 +266,14 @@ where
         self.interface.data_x_times(color, total_bytes)?;
 
         // Update display
-        self.display_frame(delay)?;
+        self.display_frame()?;
 
         Ok(())
     }
 
     /// Draw a test pattern on the display to verify it's working properly
     /// Uses a more reliable pattern that's easier to see on e-paper displays
-    pub fn draw_test_pattern(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn draw_test_pattern(&mut self) -> Result<(), DisplayError> {
         log::info!("Drawing high-contrast test pattern");
         self.use_full_frame()?;
 
@@ -429,8 +425,8 @@ where
         log::info!("Writing test pattern to display memory");
         self.update_frame_with_inversion(&buffer, false)?;
         log::info!("Updating display with test pattern");
-        self.display_frame(delay)?;
-        delay.delay_ms(1000);
+        self.display_frame()?;
+        self.interface.delay.delay_ms(1000);
 
         if try_inversion {
             // Second attempt with inversion
@@ -438,8 +434,8 @@ where
             log::info!("Writing inverted test pattern to display memory");
             self.update_frame_with_inversion(&buffer, true)?;
             log::info!("Updating display with inverted test pattern");
-            self.display_frame(delay)?;
-            delay.delay_ms(1000);
+            self.display_frame()?;
+            self.interface.delay.delay_ms(1000);
         }
 
         log::info!("Test pattern drawn successfully");
@@ -448,10 +444,7 @@ where
 
     /// Draws a very simple test pattern - half screen black, half screen white
     /// This creates the most basic pattern possible to verify display function
-    pub fn draw_simple_test_pattern(
-        &mut self,
-        delay: &mut impl DelayNs,
-    ) -> Result<(), DisplayError> {
+    pub fn draw_simple_test_pattern(&mut self) -> Result<(), DisplayError> {
         log::info!("Drawing simple split-screen test pattern (half black, half white)");
 
         // Ensure display is ready before starting
@@ -482,14 +475,14 @@ where
         // Try first with normal data
         log::info!("Updating with simple pattern (normal data)");
         self.update_frame(&buffer)?;
-        self.display_frame(delay)?;
-        delay.delay_ms(1000);
+        self.display_frame()?;
+        self.interface.delay.delay_ms(1000);
 
         // Then try with inverted data
         log::info!("Updating with simple pattern (inverted data)");
         let inverted: Vec<u8> = buffer.iter().map(|&b| !b).collect();
         self.update_frame(&inverted)?;
-        self.display_frame(delay)?;
+        self.display_frame()?;
 
         log::info!("Simple test pattern display complete");
         Ok(())
@@ -497,16 +490,13 @@ where
 
     /// Create an ultra-basic test pattern of solid white and solid black areas
     /// This provides the maximum contrast possible to verify the display is working
-    pub fn white_and_black_test_pattern(
-        &mut self,
-        delay: &mut impl DelayNs,
-    ) -> Result<(), DisplayError> {
+    pub fn white_and_black_test_pattern(&mut self) -> Result<(), DisplayError> {
         log::info!("Drawing ultra-basic white and black test pattern");
 
         // 1. Hardware reset first to ensure clean state
         log::info!("Performing hardware reset");
-        self.interface.reset(delay)?;
-        delay.delay_ms(200);
+        self.interface.reset()?;
+        self.interface.delay.delay_ms(200);
 
         // 2. Configure display for full frame update
         log::info!("Setting up for full frame update");
@@ -545,11 +535,11 @@ where
 
         // 4. Update the display with the test pattern
         log::info!("Updating display with test pattern");
-        self.display_frame(delay)?;
+        self.display_frame()?;
 
         // 5. Wait for a while to let the pattern display
         log::info!("Test pattern should now be visible");
-        delay.delay_ms(1000);
+        self.interface.delay.delay_ms(1000);
 
         // 6. Try inverting the pattern and displaying again
         log::info!("Now trying inverted pattern");
@@ -564,7 +554,7 @@ where
         self.update_frame(&buffer)?;
 
         log::info!("Updating display with inverted test pattern");
-        self.display_frame(delay)?;
+        self.display_frame()?;
 
         log::info!("Basic test pattern display completed");
         Ok(())
@@ -581,12 +571,12 @@ where
 
     /// Fast update sequence matching the working C++ implementation (epd_fast_update)
     /// This provides quicker refreshes but may have more ghosting than full updates
-    pub fn fast_update(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn fast_update(&mut self) -> Result<(), DisplayError> {
         log::info!("Starting fast update sequence from C++ implementation");
 
         // Hardware reset as per C++ implementation
-        self.interface.reset(delay)?;
-        delay.delay_ms(100);
+        self.interface.reset()?;
+        self.interface.delay.delay_ms(100);
 
         // First update sequence: 0xB1 - start reading temperature, load LUT, full update, clock off
         log::info!("Fast update step 1: Temperature read and LUT load");
@@ -620,33 +610,33 @@ where
 
     /// Emergency clear function - alternative approach to clear display to white
     /// This tries a different initialization and update sequence compared to factory_reset_clear
-    pub fn emergency_clear(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn emergency_clear(&mut self) -> Result<(), DisplayError> {
         log::info!("EMERGENCY: Attempting alternative clear operation");
 
         // Step 1: Extended reset sequence
         log::info!("Extended hardware reset");
-        self.interface.reset(delay)?;
-        delay.delay_ms(500); // Very long reset time
+        self.interface.reset()?;
+        self.interface.delay.delay_ms(500); // Very long reset time
 
         // Step 2: Basic initialization with minimal commands
         log::info!("Basic initialization sequence");
 
         // Software reset
         self.interface.cmd(Cmd::SW_RESET)?;
-        delay.delay_ms(200);
+        self.interface.delay.delay_ms(200);
 
         // Driver output control - 296 gate lines (critical for 2.9")
         log::info!("Setting driver control");
         // Try original values first
         self.interface
             .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?; // 296 lines, normal scan
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Data entry mode
         log::info!("Setting data entry mode");
         self.interface
             .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Step 3: Try display update and RAM clear without LUT settings
         // This is the most minimal approach possible
@@ -657,7 +647,7 @@ where
         // X range: 0 to (WIDTH/8 - 1)
         self.interface.cmd(Cmd::SET_RAMX_START_END)?;
         self.interface.data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Y range: 0 to (HEIGHT - 1)
         self.interface.cmd(Cmd::SET_RAMY_START_END)?;
@@ -669,7 +659,7 @@ where
             (y_end & 0xFF) as u8,        // Y end LSB (e.g., 0x27 for 295)
             ((y_end >> 8) & 0xFF) as u8, // Y end MSB (e.g., 0x01 for 295)
         ])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Set RAM address counter to (0,0)
         log::info!("Setting RAM counter to origin (0,0)");
@@ -677,7 +667,7 @@ where
         self.interface.data(&[0x00])?;
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?; // Little-endian: Y=0
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 4: Try direct pattern writing approach first
         log::info!("APPROACH 1: Using auto-write pattern for white screen");
@@ -687,7 +677,7 @@ where
             Cmd::AUTO_WRITE_BW_RAM_FOR_REGULAR_PATTERN,
             &[0xFF], // 0xFF = all white
         )?;
-        delay.delay_ms(200);
+        self.interface.delay.delay_ms(200);
 
         // Step 5: Alternative approach with manual RAM writing
         log::info!("APPROACH 2: Manual RAM fill with white data");
@@ -697,7 +687,7 @@ where
         self.interface.data(&[0x00])?;
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Write white data to RAM
         self.interface.cmd(Cmd::WRITE_BW_DATA)?;
@@ -724,7 +714,7 @@ where
 
             if bytes_to_write > 0 {
                 self.interface.data_x_times(0xFF, bytes_to_write)?;
-                delay.delay_ms(5); // Small inter-chunk delay
+                self.interface.delay.delay_ms(5); // Small inter-chunk delay
             }
         }
 
@@ -734,32 +724,32 @@ where
         log::info!("UPDATE METHOD 1: Standard update sequence");
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL1, &[0x01])?; // B/W RAM only
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xC7])?; // Standard value
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         // Longer delay to give display time to update
         log::info!("Waiting for first update to complete");
-        delay.delay_ms(500);
+        self.interface.delay.delay_ms(500);
         self.interface.wait_busy_low();
-        delay.delay_ms(200); // Additional delay after reaching idle
+        self.interface.delay.delay_ms(200); // Additional delay after reaching idle
 
         // Method 2: Alternative update sequence
         log::info!("UPDATE METHOD 2: Fast update sequence");
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xF7])?; // Different value
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         // Long delay for display to update
         log::info!("Waiting for second update to complete");
-        delay.delay_ms(500);
+        self.interface.delay.delay_ms(500);
         self.interface.wait_busy_low();
 
         // Final stability delay
-        delay.delay_ms(300);
+        self.interface.delay.delay_ms(300);
 
         log::info!("Emergency alternative clear completed");
         Ok(())
@@ -767,15 +757,15 @@ where
 
     /// Last resort: Factory-reset-style full display clear to white
     /// This is a complete standalone sequence that tries multiple approaches to clear the display
-    pub fn factory_reset_clear(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn factory_reset_clear(&mut self) -> Result<(), DisplayError> {
         log::info!("EMERGENCY: Performing comprehensive factory-reset-style clear sequence");
 
         // Step 1: Multiple hardware resets to ensure clean start
         log::info!("Performing multiple hardware resets");
         for i in 0..3 {
             log::info!("Hardware reset cycle {}", i + 1);
-            self.interface.reset(delay)?;
-            delay.delay_ms(300);
+            self.interface.reset()?;
+            self.interface.delay.delay_ms(300);
         }
 
         // Step 2: Force gate/source drivers to known good state
@@ -784,41 +774,41 @@ where
         // Software reset
         log::info!("Software reset");
         self.interface.cmd(Cmd::SW_RESET)?;
-        delay.delay_ms(300);
+        self.interface.delay.delay_ms(300);
 
         // Booster soft start control - from manufacturer datasheet
         log::info!("Setting booster soft start");
         self.interface
             .cmd_with_data(Cmd::BOOST_SOFT_START_CONTROL, &[0xD7, 0xD6, 0x9D])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Power settings
         log::info!("Setting gate voltage");
         self.interface
             .cmd_with_data(Cmd::GATE_VOLTAGE_CONTROL, &[0x19])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         log::info!("Setting source voltage");
         self.interface
             .cmd_with_data(Cmd::SOURCE_VOLTAGE_CONTROL, &[0x02, 0x0C, 0x0C])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         log::info!("Setting VCOM voltage");
         self.interface
             .cmd_with_data(Cmd::WRITE_VCOM_REGISTER, &[0xA8])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 3: Driver output control - correctly specify display dimensions
         log::info!("Setting driver output control for 2.9-inch display (296 gate lines)");
         self.interface
             .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 4: Data entry mode - ensure proper RAM address increments
         log::info!("Setting data entry mode to Y+, X+");
         self.interface
             .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 5: Configure RAM window using HEIGHT and WIDTH constants
         log::info!("Setting RAM window");
@@ -828,7 +818,7 @@ where
         log::info!("Setting X window: 0 to {} for {} pixels", ram_x_end, WIDTH);
         self.interface.cmd(Cmd::SET_RAMX_START_END)?;
         self.interface.data(&[0x00, ram_x_end])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Y window: 0 to (HEIGHT - 1)
         log::info!(
@@ -844,7 +834,7 @@ where
             ((HEIGHT - 1) & 0xFF) as u8, // Y end LSB
             ((HEIGHT - 1) >> 8) as u8,   // Y end MSB
         ])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 6: Set RAM counters to start position
         log::info!("Setting RAM counters to origin (0,0)");
@@ -852,7 +842,7 @@ where
         self.interface.data(&[0x00])?;
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?; // Y=0 (LSB first)
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 7: Set up LUT for white clear
         log::info!("Setting minimal LUT for clearing to white");
@@ -867,7 +857,7 @@ where
         ];
         self.interface
             .cmd_with_data(Cmd::WRITE_LUT_REGISTER, &clear_lut)?;
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Step 8: Write white data to ALL RAM, trying both normal and auto-write methods
 
@@ -886,10 +876,10 @@ where
 
             if bytes_to_write > 0 {
                 self.interface.data_x_times(0xFF, bytes_to_write)?;
-                delay.delay_ms(2); // Small delay between chunks
+                self.interface.delay.delay_ms(2); // Small delay between chunks
             }
         }
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Method 2: Auto write pattern
         log::info!("CLEARING METHOD 2: Auto write pattern with white");
@@ -897,13 +887,13 @@ where
             Cmd::AUTO_WRITE_BW_RAM_FOR_REGULAR_PATTERN,
             &[0xFF], // All white pattern
         )?;
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Step 9: Border waveform control - set white border
         log::info!("Setting white border");
         self.interface
             .cmd_with_data(Cmd::BORDER_WAVEFORM_CONTROL, &[0x51])?; // White border (0x50|0x01)
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 10: Configure and execute display update
         log::info!("Performing display update");
@@ -912,34 +902,34 @@ where
         log::info!("Update method 1: Full update sequence");
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL1, &[0x01])?; // B/W RAM only
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xC7])?; // Standard value
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         // Long wait for display to update
         log::info!("Waiting for display update to complete");
-        delay.delay_ms(500);
+        self.interface.delay.delay_ms(500);
         self.interface.wait_busy_low();
 
         // Second attempt with different update settings in case the first didn't work
         log::info!("Update method 2: Alternative update sequence");
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL1, &[0x01])?;
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface
             .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xF7])?; // Different value
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         // Another long wait
         log::info!("Waiting for second update to complete");
-        delay.delay_ms(500);
+        self.interface.delay.delay_ms(500);
         self.interface.wait_busy_low();
 
         // Final stability delay
-        delay.delay_ms(300);
+        self.interface.delay.delay_ms(300);
 
         log::info!("Comprehensive factory reset clear sequence completed");
         Ok(())
@@ -948,22 +938,22 @@ where
     /// Special initialization sequence for 2.9" SSD1680 e-paper displays
     /// This is customized for this specific display based on manufacturer documentation
     /// Revised to match exact specifications for 2.9-inch displays
-    pub fn init_2point9_inch(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn init_2point9_inch(&mut self) -> Result<(), DisplayError> {
         log::info!("Starting REVISED initialization for 2.9-inch SSD1680 display");
 
         // Double hardware reset for better reliability
         log::info!("Hardware reset sequence (first reset)");
-        self.interface.reset(delay)?;
-        delay.delay_ms(200); // Longer delay
+        self.interface.reset()?;
+        self.interface.delay.delay_ms(200); // Longer delay
 
         log::info!("Hardware reset sequence (second reset)");
-        self.interface.reset(delay)?;
-        delay.delay_ms(200);
+        self.interface.reset()?;
+        self.interface.delay.delay_ms(200);
 
         // Software reset
         log::info!("Software reset");
         self.interface.cmd(Cmd::SW_RESET)?;
-        delay.delay_ms(200); // Extended delay after reset
+        self.interface.delay.delay_ms(200); // Extended delay after reset
 
         // Device should be responding after reset
         log::info!("Device reset complete");
@@ -973,36 +963,36 @@ where
         // 0x27=39, 0x01=1, 0x00=0 => 296 lines (0x127=295), scan direction, output polarity
         self.interface
             .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Booster soft start - CRITICAL FOR PROPER POWER SEQUENCE
         log::info!("Setting booster soft start parameters");
         // These values are from confirmed working 2.9" e-paper displays
         self.interface
             .cmd_with_data(Cmd::BOOST_SOFT_START_CONTROL, &[0xD7, 0xD6, 0x9D])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Write VCOM register - Important for contrast
         log::info!("Setting VCOM register for proper contrast");
         self.interface
             .cmd_with_data(Cmd::WRITE_VCOM_REGISTER, &[0xA8])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set dummy line period
         log::info!("Setting dummy line period");
         self.interface.cmd_with_data(0x3A, &[0x1A])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set gate time
         log::info!("Setting gate time");
         self.interface.cmd_with_data(0x3B, &[0x08])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set data entry mode - CRITICAL FOR RAM ADDRESSING DIRECTION
         log::info!("Setting data entry mode (Y increment, X increment)");
         self.interface
             .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // RAM area configuration - CRITICAL FOR ADDRESSING THE CORRECT DISPLAY AREA
 
@@ -1013,13 +1003,13 @@ where
         log::info!("Setting RAM X window (0-15) for 128 pixel width");
         self.interface.cmd(Cmd::SET_RAMX_START_END)?;
         self.interface.data(&[0x00, 0x0F])?; // X: 0 to 15 (16 bytes per row for 128 pixels)
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         log::info!("Setting RAM Y window (0-295) for 296 pixel height");
         self.interface.cmd(Cmd::SET_RAMY_START_END)?;
         // Y: 0 to 295 (0x0000 to 0x0127)
         self.interface.data(&[0x00, 0x00, 0x27, 0x01])?; // LSB first: 0x0127 = 295
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set RAM counters to starting position (0,0)
         log::info!("Setting RAM counters to origin (0,0)");
@@ -1027,33 +1017,33 @@ where
         self.interface.data(&[0x00])?;
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?; // Y=0 (LSB first)
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set border waveform
         log::info!("Setting border waveform to white");
         // 0x01=White border with fixed high bits (0x50 | 0x01 = 0x51)
         self.interface
             .cmd_with_data(Cmd::BORDER_WAVEFORM_CONTROL, &[0x51])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set analog block control
         log::info!("Setting analog block control");
         self.interface.cmd_with_data(0x74, &[0x54])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Set digital block control
         log::info!("Setting digital block control");
         self.interface.cmd_with_data(0x7E, &[0x3B])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Temperature sensor - use internal sensor
         log::info!("Setting temperature sensor to internal");
         self.interface.cmd_with_data(Cmd::TEMP_CONTROL, &[0x80])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Load a simplified LUT for reliable operation
         log::info!("Loading simplified LUT for white clear operation");
-        self.set_minimal_lut(delay)?;
+        self.set_minimal_lut()?;
 
         // Wait for everything to stabilize
         log::info!("Waiting for stabilization");
@@ -1065,7 +1055,7 @@ where
 
     /// Set a minimal LUT (Look-Up Table) designed only for clearing the screen to white
     /// This simplifies the waveform to improve reliability
-    fn set_minimal_lut(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    fn set_minimal_lut(&mut self) -> Result<(), DisplayError> {
         log::info!("Setting minimal LUT for basic white operation");
 
         // Very simple LUT focused only on getting a white screen
@@ -1090,7 +1080,7 @@ where
 
         self.interface
             .cmd_with_data(Cmd::WRITE_LUT_REGISTER, &minimal_clear_lut)?;
-        delay.delay_ms(50); // Give time for LUT to be processed
+        self.interface.delay.delay_ms(50); // Give time for LUT to be processed
 
         log::info!("Minimal LUT set successfully");
         Ok(())
@@ -1112,8 +1102,8 @@ where
     }
 
     /// Perform hardware reset - expose interface reset for testing
-    pub fn interface_reset(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
-        self.interface.reset(delay)
+    pub fn interface_reset(&mut self) -> Result<(), DisplayError> {
+        self.interface.reset()
     }
 
     /// Exact C++ epd_all_fill() implementation for testing
@@ -1179,11 +1169,11 @@ where
     }
 
     /// Exact Arduino EPD_Init() - minimal initialization matching Arduino exactly
-    pub fn cpp_init(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn cpp_init(&mut self) -> Result<(), DisplayError> {
         log::info!("C++ EPD_Init() - exact Arduino initialization");
 
         // Hardware reset
-        self.interface.reset(delay)?;
+        self.interface.reset()?;
 
         // Software reset
         self.interface.cmd(0x12)?;
@@ -1267,20 +1257,20 @@ where
     /// Direct Clear - specialized method that only clears the display to white
     /// This method is the most direct approach to clearing the display to white, bypassing
     /// all other functionality and focusing solely on setting the display to all white pixels.
-    pub fn direct_clear(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn direct_clear(&mut self) -> Result<(), DisplayError> {
         log::info!("DIRECT CLEAR: Starting ultra-direct approach to clear display to white");
 
         // Step 1: Multiple hardware resets to ensure clean start
         log::info!("Performing multiple hardware resets");
         for _ in 0..2 {
-            self.interface.reset(delay)?;
-            delay.delay_ms(200);
+            self.interface.reset()?;
+            self.interface.delay.delay_ms(200);
         }
 
         // Step 2: Software reset to ensure clean state
         log::info!("Software reset");
         self.interface.cmd(Cmd::SW_RESET)?;
-        delay.delay_ms(200);
+        self.interface.delay.delay_ms(200);
 
         // Step 3: Configure only the essential registers for this display
 
@@ -1288,13 +1278,13 @@ where
         log::info!("Setting driver output control for 296 lines");
         self.interface.cmd(Cmd::DRIVER_CONTROL)?;
         self.interface.data(&[0x27, 0x01, 0x00])?; // 296 lines, normal scan direction
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Data entry mode - set to Y+, X+ for proper addressing
         log::info!("Setting data entry mode (Y+, X+)");
         self.interface.cmd(Cmd::DATA_ENTRY_MODE)?;
         self.interface.data(&[Flag::DATA_ENTRY_INCRY_INCRX])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Step 4: Set RAM window to cover the entire display
         log::info!("Setting RAM window to full display size");
@@ -1302,7 +1292,7 @@ where
         // X address: 0 to (WIDTH/8 - 1) = 0 to 15 for 128 pixel width
         self.interface.cmd(Cmd::SET_RAMX_START_END)?;
         self.interface.data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Y address: 0 to (HEIGHT - 1) = 0 to 295 for 296 pixel height
         // Remember Y address is little-endian (LSB first)
@@ -1313,7 +1303,7 @@ where
             ((HEIGHT - 1) as u8),      // Y end LSB (295 & 0xFF = 0x27)
             ((HEIGHT - 1) >> 8) as u8, // Y end MSB (295 >> 8 = 0x01)
         ])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Step 5: Set RAM address counter to (0,0) starting position
         log::info!("Setting RAM address counter to (0,0)");
@@ -1321,7 +1311,7 @@ where
         self.interface.data(&[0x00])?;
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Step 6: Fill the entire RAM with white pixels (0xFF)
         log::info!("Writing ALL WHITE (0xFF) to display RAM");
@@ -1331,7 +1321,7 @@ where
         self.interface
             .cmd(Cmd::AUTO_WRITE_BW_RAM_FOR_REGULAR_PATTERN)?;
         self.interface.data(&[0xFF])?; // 0xFF = all white
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Method 2: Direct RAM write as backup
         log::info!("METHOD 2: Direct RAM write with all white pixels");
@@ -1341,7 +1331,7 @@ where
         self.interface.data(&[0x00])?;
         self.interface.cmd(Cmd::SET_RAMY_COUNTER)?;
         self.interface.data(&[0x00, 0x00])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Write white data
         self.interface.cmd(Cmd::WRITE_BW_DATA)?;
@@ -1366,14 +1356,14 @@ where
                 self.interface.data_x_times(0xFF, bytes_to_write)?;
             }
         }
-        delay.delay_ms(50);
+        self.interface.delay.delay_ms(50);
 
         // Step 7: Configure border to white
         log::info!("Setting border to white");
         self.interface.cmd(Cmd::BORDER_WAVEFORM_CONTROL)?;
         self.interface
             .data(&[Flag::BORDER_WAVEFORM_FIXED_BITS | Flag::BORDER_WAVEFORM_WHITE])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Step 8: Display update sequence
         log::info!("Starting display update sequence");
@@ -1381,12 +1371,12 @@ where
         // Display update control 1 - use B/W RAM only
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL1)?;
         self.interface.data(&[Flag::DISPLAY_UPDATE_BW_RAM])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Display update control 2 - full update
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
         self.interface.data(&[Flag::DISPLAY_UPDATE_FULL])?;
-        delay.delay_ms(20);
+        self.interface.delay.delay_ms(20);
 
         // Master activation - start update
         log::info!("Activating display update");
@@ -1394,7 +1384,7 @@ where
 
         // Step 9: Wait for update to complete with long timeout
         log::info!("Waiting for display update to complete (this may take a few seconds)");
-        delay.delay_ms(500); // Pre-wait delay
+        self.interface.delay.delay_ms(500); // Pre-wait delay
 
         // Check busy status
         self.interface.wait_busy_low();
@@ -1467,20 +1457,20 @@ where
     }
 
     /// Bare minimum test pattern - tries several approaches one after another
-    pub fn bare_minimum_test(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn bare_minimum_test(&mut self) -> Result<(), DisplayError> {
         log::info!("======================================================");
         log::info!("BARE MINIMUM TEST PATTERN SEQUENCE");
         log::info!("======================================================");
 
         // Reset the device
         log::info!("Performing hardware reset");
-        self.interface.reset(delay)?;
-        delay.delay_ms(200);
+        self.interface.reset()?;
+        self.interface.delay.delay_ms(200);
 
         // Software reset
         log::info!("Performing software reset");
         self.interface.cmd(Cmd::SW_RESET)?;
-        delay.delay_ms(200);
+        self.interface.delay.delay_ms(200);
 
         // PATTERN 1: Direct RAM writing with solid white
         log::info!("\nPATTERN 1: Solid white (All 0xFF)");
@@ -1519,11 +1509,11 @@ where
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         log::info!("Waiting for update to complete");
-        delay.delay_ms(1000);
+        self.interface.delay.delay_ms(1000);
         self.interface.wait_busy_low();
 
         log::info!("White pattern should now be visible");
-        delay.delay_ms(3000);
+        self.interface.delay.delay_ms(3000);
 
         // PATTERN 2: Direct RAM writing with solid black
         log::info!("\nPATTERN 2: Solid black (All 0x00)");
@@ -1554,11 +1544,11 @@ where
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         log::info!("Waiting for update to complete");
-        delay.delay_ms(1000);
+        self.interface.delay.delay_ms(1000);
         self.interface.wait_busy_low();
 
         log::info!("Black pattern should now be visible");
-        delay.delay_ms(3000);
+        self.interface.delay.delay_ms(3000);
 
         // PATTERN 3: Checkerboard pattern
         log::info!("\nPATTERN 3: Checkerboard pattern");
@@ -1595,11 +1585,11 @@ where
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         log::info!("Waiting for update to complete");
-        delay.delay_ms(1000);
+        self.interface.delay.delay_ms(1000);
         self.interface.wait_busy_low();
 
         log::info!("Checkerboard pattern should now be visible");
-        delay.delay_ms(3000);
+        self.interface.delay.delay_ms(3000);
 
         // PATTERN 4: Try auto pattern fill
         log::info!("\nPATTERN 4: Auto pattern fill (using 0x46 command)");
@@ -1610,7 +1600,7 @@ where
             .cmd(Cmd::AUTO_WRITE_BW_RAM_FOR_REGULAR_PATTERN)?;
         self.interface.data(&[0xFF])?; // Pattern data (all white)
 
-        delay.delay_ms(100);
+        self.interface.delay.delay_ms(100);
 
         // Update display
         log::info!("Updating display with auto pattern");
@@ -1623,7 +1613,7 @@ where
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
 
         log::info!("Waiting for update to complete");
-        delay.delay_ms(1000);
+        self.interface.delay.delay_ms(1000);
         self.interface.wait_busy_low();
 
         log::info!("Auto pattern should now be visible");
@@ -1641,7 +1631,7 @@ where
     }
 
     /// Update the display with full refresh - EXACTLY matching Arduino's EPD_Update sequence
-    pub fn arduino_full_update(&mut self, _delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn arduino_full_update(&mut self) -> Result<(), DisplayError> {
         log::info!("Performing Arduino-style full update (exact EPD_Update implementation)");
 
         // Display Update Control 2 + Master Activation - matches EPD_Update exactly
@@ -1657,11 +1647,11 @@ where
     }
 
     /// Update the display with fast refresh using Arduino approach
-    pub fn arduino_fast_update(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub fn arduino_fast_update(&mut self) -> Result<(), DisplayError> {
         log::info!("Performing Arduino-style fast update");
 
         // Reset first
-        self.interface.reset(delay)?;
+        self.interface.reset()?;
 
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
         self.interface.data(&[Flag::DISPLAY_UPDATE_FAST])?; // Arduino uses 0xB1 for fast refresh
@@ -1690,11 +1680,7 @@ where
     }
 
     /// Display image using Arduino approach - based on EPD_Bitmap function but with improved stability
-    pub fn arduino_display_image(
-        &mut self,
-        image_data: &[u8],
-        _delay: &mut impl DelayNs,
-    ) -> Result<(), DisplayError> {
+    pub fn arduino_display_image(&mut self, image_data: &[u8]) -> Result<(), DisplayError> {
         log::info!(
             "Displaying image using Arduino-compatible approach (with stability improvements)"
         );

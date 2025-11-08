@@ -2,14 +2,14 @@
 use crate::ssd1680::{cmd::Cmd, flag::Flag};
 use display_interface::DisplayError;
 use embedded_hal::{
-    delay::DelayNs,
+    delay::{self, DelayNs},
     digital::{InputPin, OutputPin},
     spi::SpiDevice,
 };
 
 /// The Connection Interface of all (?) Waveshare EPD-Devices
 ///
-pub struct DisplayInterface<SPI, BSY, DC, RST> {
+pub struct DisplayInterface<SPI, BSY, DC, RST, DELAY> {
     /// SPI device
     spi: SPI,
     /// High (based on Arduino code) for busy, Wait until display is ready!
@@ -18,34 +18,43 @@ pub struct DisplayInterface<SPI, BSY, DC, RST> {
     dc: DC,
     /// Pin for Reseting
     rst: RST,
+    /// Delay provider
+    pub(crate) delay: DELAY,
 }
 
-impl<SPI, BSY, DC, RST> DisplayInterface<SPI, BSY, DC, RST> {
+impl<SPI, BSY, DC, RST, DELAY> DisplayInterface<SPI, BSY, DC, RST, DELAY> {
     /// Create and initialize display
-    pub fn new(spi: SPI, busy: BSY, dc: DC, rst: RST) -> Self {
-        DisplayInterface { spi, busy, dc, rst }
+    pub fn new(spi: SPI, busy: BSY, dc: DC, rst: RST, delay: DELAY) -> Self {
+        DisplayInterface {
+            spi,
+            busy,
+            dc,
+            rst,
+            delay,
+        }
     }
 }
 
-impl<SPI, BSY, DC, RST> DisplayInterface<SPI, BSY, DC, RST>
+impl<SPI, BSY, DC, RST, DELAY> DisplayInterface<SPI, BSY, DC, RST, DELAY>
 where
     SPI: SpiDevice,
     RST: OutputPin,
     DC: OutputPin,
     BSY: InputPin,
+    DELAY: DelayNs,
 {
     /// Initialize display using the exact Arduino initialization sequence - EXACTLY matching EPD_Init
-    pub(crate) fn init(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub(crate) fn init(&mut self) -> Result<(), DisplayError> {
         log::info!("Initializing e-paper display with SSD1680 datasheet sequence");
 
         // Hardware reset first - ESSENTIAL for proper operation
-        self.reset(delay)?;
-        delay.delay_ms(100); // Extra delay after hardware reset
+        self.reset()?;
+        self.delay.delay_ms(100); // Extra delay after hardware reset
 
         // Software reset - start with a clean state
         self.cmd(Cmd::SW_RESET)?;
         self.wait_busy_low();
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 1: Driver Output Control
         self.cmd_with_data(
@@ -56,16 +65,16 @@ where
                 Flag::DRIVER_OUTPUT_SOURCE_NORMAL_COLOR, // SM=0, TB=0 (normal color)
             ],
         )?;
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 2: Set data entry mode - critical for proper pixel mapping
         self.cmd_with_data(Cmd::DATA_ENTRY_MODE, &[Flag::DATA_ENTRY_INCRY_INCRX])?; // X-increment, Y-increment mode
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 3: Set RAM X/Y window to match display size
         // X window: 0..15 (16 bytes wide = 128 pixels / 8)
         self.cmd_with_data(Cmd::SET_RAMX_START_END, &[0x00, 0x0F])?;
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Y window: 0..295
         self.cmd_with_data(
@@ -75,21 +84,21 @@ where
                 0x27, 0x01, // Y end = 0x0127 = 295
             ],
         )?;
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 4: Set RAM X/Y position to start at (0,0)
         self.cmd_with_data(Cmd::SET_RAMX_COUNTER, &[0x00])?; // X position = 0
 
         self.cmd_with_data(Cmd::SET_RAMY_COUNTER, &[0x00, 0x00])?; // Y position = 0
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 5: Set Border Waveform
         self.cmd_with_data(Cmd::BORDER_WAVEFORM_CONTROL, &[Flag::BORDER_WAVEFORM_WHITE])?; // White border
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 6: Set up temperature sensor
         self.cmd_with_data(Cmd::TEMP_CONTROL, &[Flag::INTERNAL_TEMP_SENSOR])?; // Internal temperature sensor
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 7: Set booster configuration for better reliability
         self.cmd_with_data(
@@ -100,22 +109,22 @@ where
                 Flag::BOOSTER_SOFT_START_PHASE3_DEFAULT,
             ],
         )?; // Default values from datasheet
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 8: Set gate/source voltages for display stability
         self.cmd_with_data(Cmd::GATE_VOLTAGE_CONTROL, &[Flag::GATE_VOLTAGE_VGH_DEFAULT])?; // VGH=15V
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         self.cmd_with_data(Cmd::SOURCE_VOLTAGE_CONTROL, &[0x02, 0x0C, 0x0C])?; // VSH/VSL values for good contrast
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Step 9: Set VCOM value (critical for display quality)
         self.cmd_with_data(Cmd::WRITE_VCOM_REGISTER, &[Flag::VCOM_DEFAULT])?; // VCOM = -1.4V
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         // Final wait for any pending operations
         self.wait_busy_low();
-        delay.delay_ms(10);
+        self.delay.delay_ms(10);
 
         Ok(())
     }
@@ -191,7 +200,7 @@ where
     /// Wait for busy pin to go LOW - Arduino EPD_READBUSY implementation with safety timeout
     pub fn wait_busy_low(&mut self) {
         // Similar to Arduino but with a safety timeout to prevent infinite loops
-        let max_attempts = 50_000_000; // Very high limit but prevents infinite hang
+        let max_attempts = 5_000_000; // Very high limit but prevents infinite hang
         let mut counter = 0u32;
 
         while counter < max_attempts {
@@ -211,6 +220,7 @@ where
                     return;
                 }
             }
+            self.delay.delay_ms(10);
         }
 
         // If we got here, we timed out
@@ -222,14 +232,14 @@ where
     }
 
     /// Resets the device with the exact Arduino reset sequence - EXACTLY matching EPD_HW_RESET
-    pub(crate) fn reset(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayError> {
+    pub(crate) fn reset(&mut self) -> Result<(), DisplayError> {
         // Exactly matching Arduino EPD_HW_RESET function
         self.rst.set_high().map_err(|_| DisplayError::RSError)?;
-        delay.delay_ms(20);
+        self.delay.delay_ms(20);
         self.rst.set_low().map_err(|_| DisplayError::RSError)?;
-        delay.delay_ms(2);
+        self.delay.delay_ms(2);
         self.rst.set_high().map_err(|_| DisplayError::RSError)?;
-        delay.delay_ms(20);
+        self.delay.delay_ms(20);
 
         // Don't wait for idle here - some displays might still show busy
         // after reset until properly initialized
