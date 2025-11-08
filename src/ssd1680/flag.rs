@@ -1,7 +1,39 @@
-/// Various flags and constants used in the SSD1680 e-paper display driver.
+//! Configuration Flags and Constants for SSD1680 Controller
+//!
+//! This module contains all the flag values and constants used to configure
+//! the SSD1680 e-paper display controller. These values are used in conjunction
+//! with the command codes defined in [`cmd`](crate::ssd1680::cmd).
+//!
+//! ## Organization
+//!
+//! Flags are organized by their associated command:
+//! - **Driver Output Control** - Gate scanning and source shift direction
+//! - **Data Entry Mode** - RAM address increment/decrement direction
+//! - **Display Update Control** - Update sequence options
+//! - **Border Waveform Control** - Border appearance during updates
+//! - **Deep Sleep Mode** - Power management
+//! - **Temperature Sensor** - Internal/external sensor selection
+//! - **Voltage Control** - Default voltage values for gates and sources
+//!
+//! ## Critical Values
+//!
+//! ### Display Update Sequences
+//!
+//! - `DISPLAY_UPDATE_FULL` (0xF4) - **Used by this hardware** (not datasheet 0xC7)
+//! - `DISPLAY_UPDATE_FAST` (0xB1) - Faster update with more ghosting
+//! - `DISPLAY_UPDATE_PARTIAL_1` (0x91) - Partial update option
+//!
+//! ### Auto Write Patterns
+//!
+//! - `AUTO_WRITE_PATTERN_ALL_WHITE` (0xFF) - Fill RAM with white
+//! - `AUTO_WRITE_PATTERN_ALL_BLACK` (0x00) - Fill RAM with black
+//!
+//! **Note:** Due to this display's inverted polarity, 0x00 = white, 0xFF = black
+
+/// Configuration flags and constants for SSD1680 controller
 ///
-/// This struct contains all the flag values and constants for configuring the SSD1680 controller.
-/// All constants are documented inline with their respective values.
+/// Contains all flag values for configuring display behavior, update sequences,
+/// voltage levels, and other hardware-specific settings.
 pub struct Flag;
 #[allow(missing_docs)]
 #[allow(dead_code)]

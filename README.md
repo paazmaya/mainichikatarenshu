@@ -6,6 +6,20 @@
 
 E-ink display showing a kata for each day, along with current electricity price, using ESP-32 and written in Rust language.
 
+## Project Status
+
+**Current Phase:** ✅ Display Driver Complete | 🚧 Core Features In Development
+
+### ✅ Implemented Features
+
+- **Custom SSD1680 E-Paper Driver** - Fully functional Rust driver for the CrowPanel ESP32 2.9" display
+- **Display Rendering** - Text and image display using `embedded-graphics`
+- **RTC Integration** - Date/time tracking with ESP32 RTC
+- **Logo Display** - Build-time image conversion and display
+- **Hardware Initialization** - Complete pin configuration and SPI communication
+
+### 🚧 Planned Features
+
 Each day at 07:00 EET the e-ink screen will wake up and update the kata name from a random list.
 
 The display will shutdown at 23:00 EET, which will record the kata either incomplete if the button has not been pressed before that.
@@ -23,11 +37,9 @@ C:\\Users\\Jukka\\.rustup\\toolchains\\esp\
 https://community.chocolatey.org/packages/llvm
 choco install llvm
 
-
-
 ## Parts
 
-[CrowPanel ESP32 2.9" E-paper HMI Display with 128*296 Resolution, Black/White Color Driven By SPI Interface](https://www.elecrow.com/crowpanel-esp32-2-9-e-paper-hmi-display-with-128-296-resolution-black-white-color-driven-by-spi-interface.html)
+[CrowPanel ESP32 2.9" E-paper HMI Display with 128\*296 Resolution, Black/White Color Driven By SPI Interface](https://www.elecrow.com/crowpanel-esp32-2-9-e-paper-hmi-display-with-128-296-resolution-black-white-color-driven-by-spi-interface.html)
 
 This has internal ESP32-S3 chip, packaged with the E-paper display.
 
@@ -35,23 +47,23 @@ The "info" folder contains datasheets and further details.
 
 ### Features
 
-*    2.9-inch E-Paper display, 128*296 resolution, black and white, using SPI interface communication;
-*    ESP32-S3 as the main chip, frequency up to 240MHz;
-*    Support full viewing angle, clearly visible from any angle;
-*    High contrast and high reflectivity， can provide better visual performance;
-*    Pure reflection mode, no backlight required, completely relying on light reflection to display content, and the displayed content will not be lost even if the power is off;
-*    Hard-coated anti-glare display surface, it can keep the content clearly visible even under direct sunlight;
-*    Support Arduino IDE, ESP IDF, and MicroPython development environment to get a smooth development experience；
-*    Ultra-low power consumption and partial refresh function, significantly saving energy;
-*    Rich buttons and interfaces (such as GPIO interface, UART interface, home button, etc.) for easy development and operation.
+- 2.9-inch E-Paper display, 128\*296 resolution, black and white, using SPI interface communication;
+- ESP32-S3 as the main chip, frequency up to 240MHz;
+- Support full viewing angle, clearly visible from any angle;
+- High contrast and high reflectivity， can provide better visual performance;
+- Pure reflection mode, no backlight required, completely relying on light reflection to display content, and the displayed content will not be lost even if the power is off;
+- Hard-coated anti-glare display surface, it can keep the content clearly visible even under direct sunlight;
+- Support Arduino IDE, ESP IDF, and MicroPython development environment to get a smooth development experience；
+- Ultra-low power consumption and partial refresh function, significantly saving energy;
+- Rich buttons and interfaces (such as GPIO interface, UART interface, home button, etc.) for easy development and operation.
 
-2.9-inch Display Port |	Pin Number
---------------------- | -------------
-MENU Button           |		IO2
-Rotary Switch         |		Down(IO4); Up(IO6); CONF(IO5)
-EXIT Button           |		IO1
-GPIO                  |		IO3; IO9; IO15; IO17; IO19; IO21; IO8; IO14; IO16; IO18; IO20; IO38
-SD Card Slot(SPI)     |		MOSI(IO40); MISO(IO13); CLK(IO39); CS(IO10)
+| 2.9-inch Display Port | Pin Number                                                          |
+| --------------------- | ------------------------------------------------------------------- |
+| MENU Button           | IO2                                                                 |
+| Rotary Switch         | Down(IO4); Up(IO6); CONF(IO5)                                       |
+| EXIT Button           | IO1                                                                 |
+| GPIO                  | IO3; IO9; IO15; IO17; IO19; IO21; IO8; IO14; IO16; IO18; IO20; IO38 |
+| SD Card Slot(SPI)     | MOSI(IO40); MISO(IO13); CLK(IO39); CS(IO10)                         |
 
 ```sh
 cargo espflash board-info
@@ -89,7 +101,6 @@ Convert the CSV file to a binary:
 ```sh
 espflash partition-table --to-binary --output partition-table.bin partitions.csv
 ```
-
 
 ## Boot loader
 
@@ -134,9 +145,10 @@ idf.py bootloader
 How does the bootloader image look like?
 
 ```sh
-esptool.py image_info .\build\bootloader\bootloader.bin          
+esptool.py image_info .\build\bootloader\bootloader.bin
 ```
-```       
+
+```
 esptool.py v4.8.1
 File size: 22352 (bytes)
 Detected image type: ESP32-S3
@@ -218,11 +230,11 @@ I (76) boot:  2 factory          factory app      00 00 00030000 00300000
 I (83) boot: End of partition table
 I (86) boot: Loaded app from partition at offset 0x30000
 I (91) boot: Disabling RNG early entropy source...
-```  
+```
 
 ## Debug symbols missing in dev profile
 
-```  
+```
 xtensa-esp32-elf-readelf -S target/xtensa-esp32s3-none-elf/debug/mainichikatarenshu
 There are 4 section headers, starting at offset 0x60:
 
@@ -237,7 +249,7 @@ Key to Flags:
   L (link order), O (extra OS processing required), G (group), T (TLS),
   C (compressed), x (unknown), o (OS specific), E (exclude),
   D (mbind), p (processor specific)
-``` 
+```
 
 At this point
 idf.py erase-flash
@@ -245,11 +257,11 @@ Chip erase completed successfully in 5.0s
 
 to see that there was all the time in use some older partition table, as now there is nothing...
 
-Use menuconfig to set the partion table file as `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"`. 
+Use menuconfig to set the partion table file as `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"`.
 
 Ok, the bootloader and partition table flashing needs to be done via `idf.py`, and the resulted bootloader used when application is flashed via `espflash`.
 
-Uh, there was nothing coming in the final binary, in both release and dev  profiles it was the same, no debug symbols.
+Uh, there was nothing coming in the final binary, in both release and dev profiles it was the same, no debug symbols.
 
 Went forward by using the [esp-idf-template](https://github.com/esp-rs/esp-idf-template), but that had immediately problems linking:
 
@@ -374,12 +386,11 @@ Key to Flags:
 
 Same for both.
 
-
 It took some time to come back to this project as the Waveshare driver and embedded graphics seemed to be
 hard to get working together.
-Finally when looking at the diff 
+Finally when looking at the diff
 https://github.com/caemor/epd-waveshare/compare/v0.5.0...v0.6.0
-and 
+and
 https://github.com/embedded-graphics/embedded-graphics
 matcing use cases, got the build to compile with
 minilar text styling in a display created from `VarDisplay::new()` instead of `Display2in9::default()`.
@@ -390,14 +401,14 @@ but as `epd_waveshare::color::Color::White`.
 The text started to appear in the screen but they kept drawing om top of existing ones,
 not clearning the screen at any point.
 
-The working module was `epd_waveshare::epd2in9_v2`, but the internal commands might differ, which is why 
+The working module was `epd_waveshare::epd2in9_v2`, but the internal commands might differ, which is why
 other similar board configurations were tried out...
 
 The display is using a driver SSD1680, so perhaps should be looking at some other EPD provier than Waveshare crate.
 
 GitHub search revealed
 https://github.com/embedded-drivers/epd
-and 
+and
 https://github.com/mbv/ssd1680
 to be promising ones, the latter being used at https://github.com/mbv/esp32-ssd1680/blob/main/Cargo.toml
 
@@ -409,6 +420,69 @@ Replaced package `espflash v3.3.0` with `espflash v4.2.0` (executable `espflash.
 
 After a long battle of comparing a working Arduino example and the Rust driver, finally got the screen to show something.
 
+## Development Roadmap
+
+### Phase 1: Display Driver ✅ COMPLETE
+
+- [x] Custom SSD1680 driver implementation
+- [x] SPI communication and pin configuration
+- [x] Display initialization matching Arduino reference
+- [x] Text rendering with `embedded-graphics`
+- [x] Image display with build-time conversion
+- [x] RTC date/time integration
+
+### Phase 2: Core Application Features 🚧 IN PROGRESS
+
+- [ ] **Kata Management**
+  - [ ] Define kata list (martial arts forms)
+  - [ ] Random kata selection algorithm
+  - [ ] Daily kata rotation logic
+- [ ] **Button Input Handling**
+  - [ ] MENU button (IO2) - Navigate/confirm
+  - [ ] EXIT button (IO1) - Cancel/wake
+  - [ ] Rotary switch (IO4/IO6/IO5) - Selection
+- [ ] **Power Management**
+  - [ ] Deep sleep implementation
+  - [ ] Wake at 07:00 EET (RTC alarm)
+  - [ ] Sleep at 23:00 EET
+  - [ ] Button wake-up support
+
+### Phase 3: Connectivity & Data Sync 📋 PLANNED
+
+- [ ] **WiFi Integration**
+  - [ ] WiFi connection management
+  - [ ] NTP time synchronization
+  - [ ] Online kata list fetching
+- [ ] **Google Drive Integration**
+  - [ ] OAuth authentication
+  - [ ] Spreadsheet API integration
+  - [ ] Training log sync (date, kata, confirmed, time)
+- [ ] **Electricity Price Display**
+  - [ ] API integration for energy prices
+  - [ ] Price display on screen
+  - [ ] Historical price tracking
+
+### Phase 4: Enhancements 🎯 FUTURE
+
+- [ ] Weather integration for outdoor training
+- [ ] Battery optimization and monitoring
+- [ ] OTA (Over-The-Air) firmware updates
+- [ ] Web interface for configuration
+- [ ] Training statistics and streaks
+- [ ] Multiple kata difficulty levels
+
+## Build System
+
+The project uses a custom build script (`build.rs`) that:
+
+1. **Converts `logo.png` to binary format** - The logo image is processed at build time and embedded into the firmware
+2. **Generates display-compatible format** - Images are converted to the correct bit format for the SSD1680 controller
+3. **Embeds resources** - Binary data is included via `include_bytes!` macro
+
+To use your own logo:
+1. Replace `logo.png` in the project root (128×296 pixels, black & white recommended)
+2. Run `cargo build` - the image will be automatically converted
+
 ## License
 
 MIT
@@ -416,13 +490,14 @@ MIT
 ## Dev Containers
 
 This repository offers Dev Containers supports for:
--  [VS Code Dev Containers](https://code.visualstudio.com/docs/remote/containers#_quick-start-open-an-existing-folder-in-a-container)
--  [GitHub Codespaces](https://docs.github.com/en/codespaces/developing-in-codespaces/creating-a-codespace)
-> **Note**
->
-> In [order to use GitHub Codespaces](https://github.com/features/codespaces#faq)
-> the project needs to be published in a GitHub repository and the user needs
-> to be part of the Codespaces beta or have the project under an organization.
+
+- [VS Code Dev Containers](https://code.visualstudio.com/docs/remote/containers#_quick-start-open-an-existing-folder-in-a-container)
+- [GitHub Codespaces](https://docs.github.com/en/codespaces/developing-in-codespaces/creating-a-codespace)
+  > **Note**
+  >
+  > In [order to use GitHub Codespaces](https://github.com/features/codespaces#faq)
+  > the project needs to be published in a GitHub repository and the user needs
+  > to be part of the Codespaces beta or have the project under an organization.
 
 If using VS Code or GitHub Codespaces, you can pull the image instead of building it
 from the Dockerfile by selecting the `image` property instead of `build` in
@@ -437,12 +512,13 @@ simulating in Wokwi is also added.
 ### VS Code Dev Containers and GitHub Codespaces
 
 The Dev Container includes the Wokwi Vs Code installed, hence you can simulate your built projects doing the following:
+
 1. Press `F1`
 2. Run `Wokwi: Start Simulator`
 
 > **Note**
 >
->  We assume that the project is built in `debug` mode, if you want to simulate projects in release, please update the `elf` and  `firmware` proprieties in `wokwi.toml`.
+> We assume that the project is built in `debug` mode, if you want to simulate projects in release, please update the `elf` and `firmware` proprieties in `wokwi.toml`.
 
 For more information and details on how to use the Wokwi extension, see [Getting Started] and [Debugging your code] Chapter of the Wokwi documentation.
 

@@ -169,42 +169,19 @@ fn main() -> anyhow::Result<()> {
     // EPD_Init() -> EPD_ALL_Fill(WHITE) -> EPD_Update() -> EPD_Clear_R26H()
     log::info!("\n\n=== EXACT ARDUINO WORKING SEQUENCE ===");
 
-    // Step 1: EPD_ALL_Fill(WHITE) - Fill RAM with white pattern
-    log::info!("Step 1: EPD_ALL_Fill(WHITE)");
-    if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
-        log::error!("Failed to fill with white: {:?}", e);
-    }
-    ssd1680.interface.delay.delay_ms(100);
-
-    // Step 2: EPD_Update() - Trigger display update with 0xF4
-    log::info!("Step 2: EPD_Update() - Trigger display refresh");
-    if let Err(e) = ssd1680.cpp_update() {
-        log::error!("Failed to update display: {:?}", e);
-    }
-    ssd1680.interface.delay.delay_ms(100);
-
-    // Step 3: EPD_Clear_R26H() - Clear R26h AFTER update (not before!)
-    log::info!("Step 3: EPD_Clear_R26H() - Clear RED RAM after update");
-    if let Err(e) = ssd1680.cpp_clear_r26h() {
-        log::error!("Failed to clear R26h: {:?}", e);
+    // Step 1-3: Complete Arduino sequence (fill -> update -> clear R26h)
+    log::info!("Step 1-3: Arduino sequence with WHITE");
+    if let Err(e) = ssd1680.fill_update_clear(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
+        log::error!("Failed Arduino sequence with white: {:?}", e);
     }
 
     log::info!("Arduino sequence complete. Display should show WHITE. Waiting 5 seconds...");
     delay.delay_ms(5000);
 
     // Now try with BLACK - this should make the screen turn black
-    if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_BLACK) {
-        log::error!("Failed to fill with black: {:?}", e);
-    }
-    delay.delay_ms(100);
-
-    if let Err(e) = ssd1680.cpp_update() {
-        log::error!("Failed to update display: {:?}", e);
-    }
-    delay.delay_ms(100);
-
-    if let Err(e) = ssd1680.cpp_clear_r26h() {
-        log::error!("Failed to clear R26h: {:?}", e);
+    log::info!("Filling display with BLACK");
+    if let Err(e) = ssd1680.fill_update_clear(Flag::AUTO_WRITE_PATTERN_ALL_BLACK) {
+        log::error!("Failed Arduino sequence with black: {:?}", e);
     }
 
     log::info!("Display should be COMPLETELY BLACK");
@@ -213,14 +190,8 @@ fn main() -> anyhow::Result<()> {
 
     // Clear to white first
     log::info!("Clearing display to white");
-    if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
-        log::error!("Failed to fill white: {:?}", e);
-    }
-    if let Err(e) = ssd1680.cpp_update() {
-        log::error!("Failed to update: {:?}", e);
-    }
-    if let Err(e) = ssd1680.cpp_clear_r26h() {
-        log::error!("Failed to clear R26h: {:?}", e);
+    if let Err(e) = ssd1680.fill_update_clear(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
+        log::error!("Failed to clear to white: {:?}", e);
     }
     delay.delay_ms(500);
 
@@ -256,26 +227,13 @@ fn main() -> anyhow::Result<()> {
         .expect("Failed to draw label");
 
     // Send buffer to display using Arduino-compatible method
-    // Write buffer to RAM (WRITE_BW_DATA)
-    if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
-        log::error!("Failed to select RAM: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to select RAM: {:?}", e));
-    }
-
-    // Send the buffer data
-    if let Err(e) = ssd1680.direct_data(display.buffer()) {
-        log::error!("Failed to write buffer: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to write buffer: {:?}", e));
-    }
-
-    // Update display
-    if let Err(e) = ssd1680.cpp_update() {
-        log::error!("Failed to update display: {:?}", e);
-        return Err(anyhow::anyhow!("Failed to update display: {:?}", e));
-    }
-
-    if let Err(e) = ssd1680.cpp_clear_r26h() {
-        log::error!("Failed to clear R26h: {:?}", e);
+    log::info!("Writing date buffer to display");
+    if let Err(e) = ssd1680.write_buffer_and_update(display.buffer()) {
+        log::error!("Failed to write and update buffer: {:?}", e);
+        return Err(anyhow::anyhow!(
+            "Failed to write and update buffer: {:?}",
+            e
+        ));
     }
 
     log::info!("DATE DISPLAYED - CHECK SCREEN!");
@@ -291,37 +249,18 @@ fn main() -> anyhow::Result<()> {
         log::info!("Logo image embedded, size: {} bytes", LOGO_IMAGE.len());
 
         // Clear to white first
-        if let Err(e) = ssd1680.cpp_all_fill(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
-            log::error!("Failed to fill white: {:?}", e);
-        }
-        if let Err(e) = ssd1680.cpp_update() {
-            log::error!("Failed to update: {:?}", e);
-        }
-        if let Err(e) = ssd1680.cpp_clear_r26h() {
-            log::error!("Failed to clear R26h: {:?}", e);
+        log::info!("Clearing to white before logo");
+        if let Err(e) = ssd1680.fill_update_clear(Flag::AUTO_WRITE_PATTERN_ALL_WHITE) {
+            log::error!("Failed to clear to white: {:?}", e);
         }
         delay.delay_ms(500);
 
         // Send image buffer to display
         log::info!("Sending logo buffer to display");
-        if let Err(e) = ssd1680.direct_cmd(Cmd::WRITE_BW_DATA) {
-            log::error!("Failed to select RAM: {:?}", e);
+        if let Err(e) = ssd1680.write_buffer_and_update(LOGO_IMAGE) {
+            log::error!("Failed to write and update logo: {:?}", e);
         } else {
-            // Send the pre-converted image buffer
-            if let Err(e) = ssd1680.direct_data(LOGO_IMAGE) {
-                log::error!("Failed to write image buffer: {:?}", e);
-            } else {
-                // Update display
-                if let Err(e) = ssd1680.cpp_update() {
-                    log::error!("Failed to update display: {:?}", e);
-                } else {
-                    if let Err(e) = ssd1680.cpp_clear_r26h() {
-                        log::error!("Failed to clear R26h: {:?}", e);
-                    }
-
-                    log::info!("LOGO DISPLAYED - CHECK SCREEN!");
-                }
-            }
+            log::info!("LOGO DISPLAYED - CHECK SCREEN!");
         }
 
         delay.delay_ms(10000);

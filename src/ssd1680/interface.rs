@@ -1,4 +1,38 @@
-//! Display interface using SPI
+//! SPI Display Interface for SSD1680 E-Paper Controller
+//!
+//! This module provides the low-level communication interface between the ESP32-S3
+//! and the SSD1680 e-paper display controller via SPI.
+//!
+//! ## Pin Functions
+//!
+//! - **SPI** - Serial Peripheral Interface for data transfer
+//! - **BUSY** - Input pin that goes HIGH when display is busy (must wait before sending commands)
+//! - **DC** - Data/Command pin (HIGH = data, LOW = command)
+//! - **RST** - Reset pin for hardware reset
+//! - **DELAY** - Delay provider for timing requirements
+//!
+//! ## Critical Implementation Notes
+//!
+//! ### BUSY Pin Handling
+//!
+//! The BUSY pin is **critical** for proper operation. After sending a display update command
+//! (`MASTER_ACTIVATE`), the BUSY pin goes HIGH and the code **must** wait for it to go LOW
+//! before continuing. Failure to wait will result in:
+//! - Blank/corrupted display
+//! - Interrupted update sequences
+//! - Unpredictable behavior
+//!
+//! E-paper displays are slow (1-3 seconds for full update) and this wait is mandatory.
+//!
+//! ### Hardware Reset Sequence
+//!
+//! The hardware reset sequence is:
+//! 1. Set RST LOW for 10ms
+//! 2. Set RST HIGH for 10ms
+//! 3. Wait for BUSY pin to go LOW
+//!
+//! This ensures the controller starts in a known state.
+
 use crate::ssd1680::{cmd::Cmd, flag::Flag};
 use display_interface::DisplayError;
 use embedded_hal::{
@@ -7,8 +41,13 @@ use embedded_hal::{
     spi::SpiDevice,
 };
 
-/// The Connection Interface of all (?) Waveshare EPD-Devices
+/// SPI Display Interface for SSD1680 E-Paper Controller
 ///
+/// Manages low-level communication with the SSD1680 via SPI, including:
+/// - Command and data transmission
+/// - Pin control (DC, RST, BUSY)
+/// - Hardware reset sequences
+/// - BUSY pin waiting (critical for e-paper displays)
 pub struct DisplayInterface<SPI, BSY, DC, RST, DELAY> {
     /// SPI device
     spi: SPI,

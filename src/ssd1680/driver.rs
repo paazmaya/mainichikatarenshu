@@ -1,4 +1,63 @@
-//! Driver for interacting with SSD1680 display driver
+//! SSD1680 Display Driver Implementation
+//!
+//! This module contains the main driver implementation for the SSD1680 e-paper display controller.
+//! It provides high-level functions for display initialization, buffer management, and updates.
+//!
+//! ## Architecture
+//!
+//! The driver is organized into several function categories:
+//!
+//! ### Initialization Functions
+//! - `new()` - Create and initialize the driver
+//! - `cpp_init()` - Arduino-compatible initialization sequence
+//! - `init()` - Standard initialization (internal)
+//!
+//! ### Display Update Functions (Used in Production)
+//! - `write_buffer_and_update()` - Write buffer and trigger display update
+//! - `fill_update_clear()` - Fill RAM with pattern, update, and clear red RAM
+//! - `cpp_all_fill()` - Fill RAM with pattern (Arduino-compatible)
+//! - `cpp_update()` - Trigger display update (Arduino-compatible)
+//! - `cpp_clear_r26h()` - Clear red RAM (Arduino-compatible)
+//!
+//! ### Direct Access Functions
+//! - `direct_cmd()` - Send command directly
+//! - `direct_data()` - Send data directly
+//!
+//! ### Debug/Test Functions (Unused but Valuable)
+//! - `draw_test_pattern()` - Draw various test patterns
+//! - `white_and_black_test_pattern()` - Half white, half black test
+//! - `emergency_clear()` - Emergency display clear
+//! - `factory_reset_clear()` - Factory reset sequence
+//!
+//! ### Alternative Update Modes (Unused)
+//! - `fast_update()` - Faster update with more ghosting
+//! - `arduino_full_update()` - Alternative full update sequence
+//!
+//! ### Power Management (Planned)
+//! - `sleep()` - Enter deep sleep mode
+//! - `wake_up()` - Wake from deep sleep
+//!
+//! ## Critical Implementation Details
+//!
+//! ### Display Update Value (0xF4 vs 0xC7)
+//!
+//! The SSD1680 datasheet suggests `0xC7` for Display Update Control 2, but this
+//! hardware requires `0xF4` (from working Arduino implementation). This is stored
+//! in `Flag::DISPLAY_UPDATE_FULL`.
+//!
+//! ### Polarity Inversion
+//!
+//! This display has inverted polarity:
+//! - `0x00` = white pixels
+//! - `0xFF` = black pixels
+//!
+//! Data is sent directly without inversion (unlike some Arduino examples).
+//!
+//! ### BUSY Pin Wait
+//!
+//! After `MASTER_ACTIVATE` command, **must** wait for BUSY pin to go LOW.
+//! This is handled by `interface.wait_busy_low()` and takes 1-3 seconds.
+
 pub use display_interface::DisplayError;
 
 use embedded_hal::delay::DelayNs;
@@ -8,7 +67,18 @@ use embedded_hal::spi::SpiDevice;
 use crate::ssd1680::interface::DisplayInterface;
 use crate::ssd1680::{cmd::Cmd, color, flag::Flag, HEIGHT, WIDTH};
 
-/// A configured display with a hardware interface.
+/// SSD1680 E-Paper Display Driver
+///
+/// Main driver struct that manages the display hardware interface and provides
+/// high-level functions for display operations.
+///
+/// ## Type Parameters
+///
+/// - `SPI` - SPI device for communication
+/// - `BSY` - BUSY input pin (HIGH when display is busy)
+/// - `RST` - Reset output pin
+/// - `DC` - Data/Command output pin
+/// - `DELAY` - Delay provider for timing
 pub struct Ssd1680<SPI, BSY, RST, DC, DELAY> {
     /// The display interface
     pub interface: DisplayInterface<SPI, BSY, RST, DC, DELAY>,
@@ -135,6 +205,106 @@ where
         Ok(())
     }
 
+    /// Execute command with data and delay
+    fn cmd_data_delay(&mut self, cmd: u8, data: &[u8], delay_ms: u32) -> Result<(), DisplayError> {
+        self.interface.cmd_with_data(cmd, data)?;
+        self.interface.delay.delay_ms(delay_ms);
+        Ok(())
+    }
+
+    /// Execute command followed by data (shorthand for cmd + data pattern)
+    fn cmd_data(&mut self, cmd: u8, data: &[u8]) -> Result<(), DisplayError> {
+        self.interface.cmd(cmd)?;
+        self.interface.data(data)
+    }
+
+    /// Configure power settings (booster, gate voltage, source voltage, VCOM)
+    fn configure_power_settings(&mut self) -> Result<(), DisplayError> {
+        // Booster soft start control
+        self.cmd_data_delay(Cmd::BOOST_SOFT_START_CONTROL, &[0xD7, 0xD6, 0x9D], 50)?;
+
+        // Gate voltage control
+        self.cmd_data_delay(Cmd::GATE_VOLTAGE_CONTROL, &[0x19], 50)?;
+
+        // Source voltage control
+        self.cmd_data_delay(Cmd::SOURCE_VOLTAGE_CONTROL, &[0x02, 0x0C, 0x0C], 50)?;
+
+        // VCOM register
+        self.cmd_data_delay(Cmd::WRITE_VCOM_REGISTER, &[0xA8], 50)?;
+
+        Ok(())
+    }
+
+    /// Configure driver output control for 2.9" display (296 gate lines)
+    fn configure_driver_output(&mut self) -> Result<(), DisplayError> {
+        self.cmd_data_delay(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00], 50)
+    }
+
+    /// Configure data entry mode to Y+, X+
+    fn configure_data_entry_mode(&mut self) -> Result<(), DisplayError> {
+        self.cmd_data_delay(Cmd::DATA_ENTRY_MODE, &[0x03], 50)
+    }
+
+    /// Set border waveform to white or black
+    fn set_border_waveform(&mut self, white: bool) -> Result<(), DisplayError> {
+        let value = if white {
+            Flag::BORDER_WAVEFORM_WHITE
+        } else {
+            Flag::BORDER_WAVEFORM_BLACK
+        };
+        self.interface
+            .cmd_with_data(Cmd::BORDER_WAVEFORM_CONTROL, &[value])
+    }
+
+    /// Write data in chunks with optional progress logging
+    fn write_data_chunked(
+        &mut self,
+        data: &[u8],
+        chunk_size: usize,
+        log_progress: bool,
+    ) -> Result<(), DisplayError> {
+        let total_chunks = data.len().div_ceil(chunk_size);
+
+        for (chunk_idx, chunk) in data.chunks(chunk_size).enumerate() {
+            if log_progress && chunk_idx % 8 == 0 {
+                log::info!(
+                    "Writing chunk {}/{} ({:.1}%)",
+                    chunk_idx + 1,
+                    total_chunks,
+                    100.0 * (chunk_idx + 1) as f32 / total_chunks as f32
+                );
+            }
+            self.interface.data(chunk)?;
+        }
+        Ok(())
+    }
+
+    /// Write repeated byte value in chunks
+    fn write_repeated_byte_chunked(
+        &mut self,
+        byte: u8,
+        total_bytes: u32,
+        chunk_size: u32,
+        log_progress: bool,
+    ) -> Result<(), DisplayError> {
+        for i in 0..total_bytes.div_ceil(chunk_size) {
+            let remaining = total_bytes - i * chunk_size;
+            let bytes_to_write = remaining.min(chunk_size);
+
+            if bytes_to_write > 0 {
+                if log_progress && i % 10 == 0 {
+                    log::info!(
+                        "Writing chunk {}/{}",
+                        i + 1,
+                        total_bytes.div_ceil(chunk_size)
+                    );
+                }
+                self.interface.data_x_times(byte, bytes_to_write)?;
+            }
+        }
+        Ok(())
+    }
+
     // ==================== End of Helper Functions ====================
 
     /// Set the Look-Up Table (LUT) for the display
@@ -160,36 +330,36 @@ where
         // ----------------------
 
         // Booster Soft Start Configuration
-        self.interface.cmd_with_data(
+        self.cmd_data_delay(
             Cmd::BOOST_SOFT_START_CONTROL,
             &[
                 Flag::BOOSTER_SOFT_START_PHASE1_DEFAULT,
                 Flag::BOOSTER_SOFT_START_PHASE2_DEFAULT,
                 Flag::BOOSTER_SOFT_START_PHASE3_DEFAULT,
             ],
+            10,
         )?;
-        self.interface.delay.delay_ms(10);
 
         // Gate Driving Voltage
-        self.interface.cmd_with_data(
+        self.cmd_data_delay(
             Cmd::GATE_VOLTAGE_CONTROL,
             &[Flag::GATE_VOLTAGE_VGH_DEFAULT], // 15V
+            10,
         )?;
-        self.interface.delay.delay_ms(10);
 
         // Source Driving Voltage
-        self.interface.cmd_with_data(
+        self.cmd_data_delay(
             Cmd::SOURCE_VOLTAGE_CONTROL,
             &[0x02, 0x0C, 0x0C], // VSH1/VSH2/VSL values
+            10,
         )?;
-        self.interface.delay.delay_ms(10);
 
         // VCOM Control
-        self.interface.cmd_with_data(
+        self.cmd_data_delay(
             Cmd::WRITE_VCOM_CONTROL_REGISTER,
             &[Flag::VCOM_DEFAULT], // Using moderate VCOM value: approximately -1.4V
+            10,
         )?;
-        self.interface.delay.delay_ms(10);
 
         // ----------------------
         // RAM Area Configuration
@@ -289,18 +459,18 @@ where
         self.interface.delay.delay_ms(100); // Substantial delay before update sequence
 
         // 1. Set display update control 1
-        self.interface.cmd_with_data(
+        self.cmd_data_delay(
             Cmd::DISPLAY_UPDATE_CTRL1,
             &[Flag::DISPLAY_UPDATE_BW_RAM], // Update only B/W RAM for simpler operation
+            20,
         )?;
-        self.interface.delay.delay_ms(20); // Longer delay to ensure command is processed
 
         // 2. Set display update control 2
-        self.interface.cmd_with_data(
+        self.cmd_data_delay(
             Cmd::DISPLAY_UPDATE_CTRL2,
             &[Flag::DISPLAY_UPDATE_FULL], // Value from working C++ implementation
+            20,
         )?;
-        self.interface.delay.delay_ms(20); // Longer delay to ensure command is processed
 
         // 3. Master activate - this actually triggers the display update
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
@@ -680,138 +850,6 @@ where
         Ok(())
     }
 
-    /// Emergency clear function - alternative approach to clear display to white
-    /// This tries a different initialization and update sequence compared to factory_reset_clear
-    ///
-    /// **UNUSED** - Not called from main.rs execution path
-    pub fn emergency_clear(&mut self) -> Result<(), DisplayError> {
-        log::info!("EMERGENCY: Attempting alternative clear operation");
-
-        // Step 1: Extended reset sequence
-        log::info!("Extended hardware reset");
-        self.reset_with_delay(500)?; // Very long reset time
-
-        // Step 2: Basic initialization with minimal commands
-        log::info!("Basic initialization sequence");
-
-        // Software reset
-        self.interface.cmd(Cmd::SW_RESET)?;
-        self.interface.delay.delay_ms(200);
-
-        // Driver output control - 296 gate lines (critical for 2.9")
-        log::info!("Setting driver control");
-        // Try original values first
-        self.interface
-            .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?; // 296 lines, normal scan
-        self.interface.delay.delay_ms(100);
-
-        // Data entry mode
-        log::info!("Setting data entry mode");
-        self.interface
-            .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
-        self.interface.delay.delay_ms(100);
-
-        // Step 3: Try display update and RAM clear without LUT settings
-        // This is the most minimal approach possible
-
-        // Set RAM window to cover entire display
-        log::info!("Setting RAM window to full display size");
-
-        // X range: 0 to (WIDTH/8 - 1)
-        self.interface.cmd(Cmd::SET_RAMX_START_END)?;
-        self.interface.data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
-        self.interface.delay.delay_ms(50);
-
-        // Y range: 0 to (HEIGHT - 1)
-        self.interface.cmd(Cmd::SET_RAMY_START_END)?;
-        // Y address is little-endian in this driver
-        let y_end = HEIGHT - 1;
-        self.interface.data(&[
-            0x00,
-            0x00,                        // Y start: 0
-            (y_end & 0xFF) as u8,        // Y end LSB (e.g., 0x27 for 295)
-            ((y_end >> 8) & 0xFF) as u8, // Y end MSB (e.g., 0x01 for 295)
-        ])?;
-        self.interface.delay.delay_ms(50);
-
-        // Set RAM address counter to (0,0)
-        log::info!("Setting RAM counter to origin (0,0)");
-        self.reset_ram_counters_with_delay(50)?;
-
-        // Step 4: Try direct pattern writing approach first
-        log::info!("APPROACH 1: Using auto-write pattern for white screen");
-
-        // Use the auto-write pattern command for faster filling
-        self.interface.cmd_with_data(
-            Cmd::AUTO_WRITE_BW_RAM_FOR_REGULAR_PATTERN,
-            &[0xFF], // 0xFF = all white
-        )?;
-        self.interface.delay.delay_ms(200);
-
-        // Step 5: Alternative approach with manual RAM writing
-        log::info!("APPROACH 2: Manual RAM fill with white data");
-
-        // Reset RAM pointers
-        self.reset_ram_counters_with_delay(50)?;
-
-        // Write white data to RAM
-        self.interface.cmd(Cmd::WRITE_BW_DATA)?;
-
-        // Calculate total bytes needed for the full frame
-        let width_bytes = WIDTH as u32 / 8;
-        let total_bytes = width_bytes * HEIGHT as u32;
-
-        // Fill in smaller chunks with progress reporting
-        let chunk_size = 64; // Smaller chunks for more reliable transmission
-        log::info!("Writing {} bytes of WHITE data in chunks", total_bytes);
-
-        for i in 0..total_bytes.div_ceil(chunk_size) {
-            let bytes_remaining = total_bytes - i * chunk_size;
-            let bytes_to_write = bytes_remaining.min(chunk_size);
-
-            if i % 10 == 0 {
-                log::info!(
-                    "Writing chunk {}/{}",
-                    i + 1,
-                    total_bytes.div_ceil(chunk_size)
-                );
-            }
-
-            if bytes_to_write > 0 {
-                self.interface.data_x_times(0xFF, bytes_to_write)?;
-                self.interface.delay.delay_ms(5); // Small inter-chunk delay
-            }
-        }
-
-        // Step 6: Try both update methods for redundancy
-
-        // Method 1: Standard update sequence
-        log::info!("UPDATE METHOD 1: Standard update sequence");
-        self.interface
-            .cmd_with_data(Cmd::DISPLAY_UPDATE_CTRL1, &[0x01])?; // B/W RAM only
-        self.interface.delay.delay_ms(50);
-        self.trigger_display_update_with_delay(0xC7, 50)?; // Standard value
-
-        // Longer delay to give display time to update
-        log::info!("Waiting for first update to complete");
-        self.interface.delay.delay_ms(500);
-        self.interface.delay.delay_ms(200); // Additional delay after reaching idle
-
-        // Method 2: Alternative update sequence
-        log::info!("UPDATE METHOD 2: Fast update sequence");
-        self.trigger_display_update_with_delay(0xF7, 50)?; // Different value
-
-        // Long delay for display to update
-        log::info!("Waiting for second update to complete");
-        self.interface.delay.delay_ms(500);
-
-        // Final stability delay
-        self.interface.delay.delay_ms(300);
-
-        log::info!("Emergency alternative clear completed");
-        Ok(())
-    }
-
     /// Last resort: Factory-reset-style full display clear to white
     /// This is a complete standalone sequence that tries multiple approaches to clear the display
     ///
@@ -834,39 +872,16 @@ where
         self.interface.cmd(Cmd::SW_RESET)?;
         self.interface.delay.delay_ms(300);
 
-        // Booster soft start control - from manufacturer datasheet
-        log::info!("Setting booster soft start");
-        self.interface
-            .cmd_with_data(Cmd::BOOST_SOFT_START_CONTROL, &[0xD7, 0xD6, 0x9D])?;
-        self.interface.delay.delay_ms(50);
-
-        // Power settings
-        log::info!("Setting gate voltage");
-        self.interface
-            .cmd_with_data(Cmd::GATE_VOLTAGE_CONTROL, &[0x19])?;
-        self.interface.delay.delay_ms(50);
-
-        log::info!("Setting source voltage");
-        self.interface
-            .cmd_with_data(Cmd::SOURCE_VOLTAGE_CONTROL, &[0x02, 0x0C, 0x0C])?;
-        self.interface.delay.delay_ms(50);
-
-        log::info!("Setting VCOM voltage");
-        self.interface
-            .cmd_with_data(Cmd::WRITE_VCOM_REGISTER, &[0xA8])?;
-        self.interface.delay.delay_ms(50);
+        // Configure power settings using helper
+        self.configure_power_settings()?;
 
         // Step 3: Driver output control - correctly specify display dimensions
         log::info!("Setting driver output control for 2.9-inch display (296 gate lines)");
-        self.interface
-            .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?;
-        self.interface.delay.delay_ms(50);
+        self.configure_driver_output()?;
 
         // Step 4: Data entry mode - ensure proper RAM address increments
         log::info!("Setting data entry mode to Y+, X+");
-        self.interface
-            .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
-        self.interface.delay.delay_ms(50);
+        self.configure_data_entry_mode()?;
 
         // Step 5: Configure RAM window using HEIGHT and WIDTH constants
         log::info!("Setting RAM window");
@@ -922,17 +937,8 @@ where
         let total_bytes = (WIDTH as u32 / 8) * (HEIGHT as u32);
         log::info!("Writing {} bytes of WHITE data (0xFF)", total_bytes);
 
-        // Write all white data in smaller chunks
-        let chunk_size = 64;
-        for i in 0..total_bytes.div_ceil(chunk_size) {
-            let remaining = total_bytes - i * chunk_size;
-            let bytes_to_write = remaining.min(chunk_size);
-
-            if bytes_to_write > 0 {
-                self.interface.data_x_times(0xFF, bytes_to_write)?;
-                self.interface.delay.delay_ms(2); // Small delay between chunks
-            }
-        }
+        // Write all white data in smaller chunks using helper
+        self.write_repeated_byte_chunked(0xFF, total_bytes, 64, false)?;
         self.interface.delay.delay_ms(100);
 
         // Method 2: Auto write pattern
@@ -1006,55 +1012,31 @@ where
 
         // Driver output control - CRITICAL SETTING FOR 2.9" DISPLAY WITH 296 GATE LINES
         log::info!("Setting driver control for 2.9-inch (296 gate lines)");
-        // 0x27=39, 0x01=1, 0x00=0 => 296 lines (0x127=295), scan direction, output polarity
-        self.interface
-            .cmd_with_data(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00], 20)?;
 
         // Booster soft start - CRITICAL FOR PROPER POWER SEQUENCE
         log::info!("Setting booster soft start parameters");
-        // These values are from confirmed working 2.9" e-paper displays
-        self.interface
-            .cmd_with_data(Cmd::BOOST_SOFT_START_CONTROL, &[0xD7, 0xD6, 0x9D])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::BOOST_SOFT_START_CONTROL, &[0xD7, 0xD6, 0x9D], 20)?;
 
         // Write VCOM register - Important for contrast
         log::info!("Setting VCOM register for proper contrast");
-        self.interface
-            .cmd_with_data(Cmd::WRITE_VCOM_REGISTER, &[0xA8])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::WRITE_VCOM_REGISTER, &[0xA8], 20)?;
 
         // Set dummy line period
         log::info!("Setting dummy line period");
-        self.interface.cmd_with_data(0x3A, &[0x1A])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(0x3A, &[0x1A], 20)?;
 
         // Set gate time
         log::info!("Setting gate time");
-        self.interface.cmd_with_data(0x3B, &[0x08])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(0x3B, &[0x08], 20)?;
 
         // Set data entry mode - CRITICAL FOR RAM ADDRESSING DIRECTION
         log::info!("Setting data entry mode (Y increment, X increment)");
-        self.interface
-            .cmd_with_data(Cmd::DATA_ENTRY_MODE, &[0x03])?; // Y+, X+
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::DATA_ENTRY_MODE, &[0x03], 20)?;
 
         // RAM area configuration - CRITICAL FOR ADDRESSING THE CORRECT DISPLAY AREA
-
-        // Calculate RAM window parameters for 2.9" display
-        // WIDTH = 128 pixels, which is 128/8 = 16 bytes per row
-        // So X address should be 0x00 to 0x0F (0 to 15)
-        // HEIGHT = 296 pixels, so Y address should be 0 to 295 (0x0000 to 0x0127)
-        log::info!("Setting RAM X window (0-15) for 128 pixel width");
-        self.interface.cmd(Cmd::SET_RAMX_START_END)?;
-        self.interface.data(&[0x00, 0x0F])?; // X: 0 to 15 (16 bytes per row for 128 pixels)
-        self.interface.delay.delay_ms(20);
-
-        log::info!("Setting RAM Y window (0-295) for 296 pixel height");
-        self.interface.cmd(Cmd::SET_RAMY_START_END)?;
-        // Y: 0 to 295 (0x0000 to 0x0127)
-        self.interface.data(&[0x00, 0x00, 0x27, 0x01])?; // LSB first: 0x0127 = 295
+        log::info!("Setting RAM window for full display");
+        self.set_full_ram_window()?;
         self.interface.delay.delay_ms(20);
 
         // Set RAM counters to starting position (0,0)
@@ -1063,25 +1045,20 @@ where
 
         // Set border waveform
         log::info!("Setting border waveform to white");
-        // 0x01=White border with fixed high bits (0x50 | 0x01 = 0x51)
-        self.interface
-            .cmd_with_data(Cmd::BORDER_WAVEFORM_CONTROL, &[0x51])?;
+        self.set_border_waveform(true)?;
         self.interface.delay.delay_ms(20);
 
         // Set analog block control
         log::info!("Setting analog block control");
-        self.interface.cmd_with_data(0x74, &[0x54])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(0x74, &[0x54], 20)?;
 
         // Set digital block control
         log::info!("Setting digital block control");
-        self.interface.cmd_with_data(0x7E, &[0x3B])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(0x7E, &[0x3B], 20)?;
 
         // Temperature sensor - use internal sensor
         log::info!("Setting temperature sensor to internal");
-        self.interface.cmd_with_data(Cmd::TEMP_CONTROL, &[0x80])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::TEMP_CONTROL, &[0x80], 20)?;
 
         // Load a simplified LUT for reliable operation
         log::info!("Loading simplified LUT for white clear operation");
@@ -1159,12 +1136,7 @@ where
         log::info!("C++ epd_all_fill with color: 0x{:02X}", color);
 
         // Border waveform control - EXACTLY as in C++
-        self.interface.cmd(Cmd::BORDER_WAVEFORM_CONTROL)?;
-        if color != 0 {
-            self.interface.data(&[Flag::BORDER_WAVEFORM_WHITE])?;
-        } else {
-            self.interface.data(&[Flag::BORDER_WAVEFORM_BLACK])?;
-        }
+        self.set_border_waveform(color != 0)?;
 
         // Write RAM (WRITE_BW_DATA)
         self.interface.cmd(Cmd::WRITE_BW_DATA)?;
@@ -1209,7 +1181,114 @@ where
         Ok(())
     }
 
-    /// Exact Arduino EPD_Init() - minimal initialization matching Arduino exactly
+    /// Complete Arduino-style display sequence: fill → update → clear R26h
+    ///
+    /// This is the standard sequence used in Arduino examples for filling the entire
+    /// display with a solid color pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `color` - Pattern to fill RAM with (typically `Flag::AUTO_WRITE_PATTERN_ALL_WHITE` or `Flag::AUTO_WRITE_PATTERN_ALL_BLACK`)
+    ///
+    /// # Sequence
+    ///
+    /// 1. Fill B/W RAM with pattern using `cpp_all_fill()`
+    /// 2. Trigger display update using `cpp_update()`
+    /// 3. Clear red RAM using `cpp_clear_r26h()`
+    ///
+    /// # Note
+    ///
+    /// Due to this display's inverted polarity:
+    /// - `0x00` = white pixels
+    /// - `0xFF` = black pixels
+    ///
+    /// # Used In
+    ///
+    /// - `main.rs` - For clearing display to white/black before rendering
+    pub fn fill_update_clear(&mut self, color: u8) -> Result<(), DisplayError> {
+        self.cpp_all_fill(color)?;
+        self.cpp_update()?;
+        self.cpp_clear_r26h()?;
+        Ok(())
+    }
+
+    /// Write buffer to display RAM and trigger update
+    ///
+    /// This is the main function for displaying custom content (text, images, graphics).
+    /// It writes the provided buffer to the display's B/W RAM and triggers a full update.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - Byte array containing the display data (4736 bytes for 128×296 display)
+    ///
+    /// # Buffer Format
+    ///
+    /// - Each byte represents 8 horizontal pixels
+    /// - Total size: (128 / 8) × 296 = 16 × 296 = 4736 bytes
+    /// - Bit order: MSB first (leftmost pixel)
+    /// - Due to inverted polarity: bit 0 = white, bit 1 = black
+    ///
+    /// # Sequence
+    ///
+    /// 1. Send `WRITE_BW_DATA` command
+    /// 2. Send buffer data via SPI
+    /// 3. Trigger display update (waits for BUSY pin)
+    /// 4. Clear red RAM (for tri-color compatibility)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use embedded_graphics::{prelude::*, pixelcolor::BinaryColor};
+    /// use ssd1680::graphics::Display2in13;
+    ///
+    /// let mut display = Display2in13::new();
+    /// display.clear(BinaryColor::Off)?; // Clear to white
+    /// // ... draw text, shapes, etc. ...
+    /// ssd1680.write_buffer_and_update(display.buffer())?;
+    /// ```
+    ///
+    /// # Used In
+    ///
+    /// - `main.rs` - For displaying date text and logo image
+    pub fn write_buffer_and_update(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
+        self.interface.cmd(Cmd::WRITE_BW_DATA)?;
+        self.interface.data(buffer)?;
+        self.cpp_update()?;
+        self.cpp_clear_r26h()?;
+        Ok(())
+    }
+
+    /// Arduino-compatible initialization sequence (EPD_Init)
+    ///
+    /// This function exactly matches the `EPD_Init()` function from the working Arduino
+    /// examples. It performs minimal initialization required to get the display operational.
+    ///
+    /// # Initialization Sequence
+    ///
+    /// 1. **Hardware Reset** - Reset pin LOW → HIGH
+    /// 2. **Software Reset** (0x12) - Reset controller state
+    /// 3. **Driver Output Control** (0x01) - Configure 296 gate lines
+    /// 4. **Data Entry Mode** (0x11) - Set Y+, X+ increment mode
+    /// 5. **RAM X Address** (0x44) - Set X range 0-15 (128 pixels)
+    /// 6. **RAM Y Address** (0x45) - Set Y range 0-295 (296 pixels)
+    /// 7. **Border Waveform** (0x3C) - Set border to follow LUT
+    /// 8. **Temperature Sensor** (0x18) - Use internal sensor
+    /// 9. **RAM Counters** - Reset X/Y to origin (0, 0)
+    ///
+    /// # Why This Works
+    ///
+    /// This initialization sequence is minimal but sufficient because:
+    /// - Uses controller defaults for most settings
+    /// - Focuses on essential configuration only
+    /// - Matches the working Arduino reference implementation
+    ///
+    /// # Used In
+    ///
+    /// - `main.rs` - Called once during startup after driver creation
+    ///
+    /// # See Also
+    ///
+    /// - `init()` - Alternative initialization with more configuration
     pub fn cpp_init(&mut self) -> Result<(), DisplayError> {
         log::info!("C++ EPD_Init() - exact Arduino initialization");
 
@@ -1221,36 +1300,28 @@ where
         self.interface.wait_busy_low();
 
         // Driver output control
-        self.interface.cmd(0x01)?;
-        self.interface.data(&[0x27, 0x01, 0x00])?;
+        self.cmd_data(0x01, &[0x27, 0x01, 0x00])?;
 
         // Data entry mode
-        self.interface.cmd(0x11)?;
-        self.interface.data(&[0x03])?;
+        self.cmd_data(0x11, &[0x03])?;
 
         // RAM X address
-        self.interface.cmd(0x44)?;
-        self.interface.data(&[0x00, 0x0F])?;
+        self.cmd_data(0x44, &[0x00, 0x0F])?;
 
         // RAM Y address
-        self.interface.cmd(0x45)?;
-        self.interface.data(&[0x00, 0x00, 0x27, 0x01])?;
+        self.cmd_data(0x45, &[0x00, 0x00, 0x27, 0x01])?;
 
         // Border waveform
-        self.interface.cmd(0x3C)?;
-        self.interface.data(&[0x01])?;
+        self.cmd_data(0x3C, &[0x01])?;
 
         // Temperature sensor
-        self.interface.cmd(0x18)?;
-        self.interface.data(&[0x80])?;
+        self.cmd_data(0x18, &[0x80])?;
 
         // RAM X counter
-        self.interface.cmd(0x4E)?;
-        self.interface.data(&[0x00])?;
+        self.cmd_data(0x4E, &[0x00])?;
 
         // RAM Y counter
-        self.interface.cmd(0x4F)?;
-        self.interface.data(&[0x00, 0x00])?;
+        self.cmd_data(0x4F, &[0x00, 0x00])?;
 
         // Final busy wait
         self.interface.wait_busy_low();
@@ -1271,13 +1342,11 @@ where
 
         // Step 2: Enable display update with only BW RAM (most important for basic operation)
         log::info!("Setting Display Update Control 1 (0x21)");
-        self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL1)?;
-        self.interface.data(&[0x01])?; // Enable ONLY B/W RAM update, disable red RAM
+        self.cmd_data(Cmd::DISPLAY_UPDATE_CTRL1, &[0x01])?; // Enable ONLY B/W RAM update, disable red RAM
 
         // Step 3: Set update control with working C++ value
         log::info!("Setting Display Update Control 2 (0x22) with working C++ value");
-        self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
-        self.interface.data(&[0xF4])?; // Use working C++ value (was 0xC7 in datasheet)
+        self.cmd_data(Cmd::DISPLAY_UPDATE_CTRL2, &[0xF4])?; // Use working C++ value (was 0xC7 in datasheet)
 
         // Step 4: Activate
         log::info!("Activating display update with Master Activate (0x20)");
@@ -1316,33 +1385,15 @@ where
 
         // Driver output control - 296 gate lines for 2.9" display (0x127+1 = 296)
         log::info!("Setting driver output control for 296 lines");
-        self.interface.cmd(Cmd::DRIVER_CONTROL)?;
-        self.interface.data(&[0x27, 0x01, 0x00])?; // 296 lines, normal scan direction
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::DRIVER_CONTROL, &[0x27, 0x01, 0x00], 20)?;
 
         // Data entry mode - set to Y+, X+ for proper addressing
         log::info!("Setting data entry mode (Y+, X+)");
-        self.interface.cmd(Cmd::DATA_ENTRY_MODE)?;
-        self.interface.data(&[Flag::DATA_ENTRY_INCRY_INCRX])?;
-        self.interface.delay.delay_ms(20);
+        self.cmd_data_delay(Cmd::DATA_ENTRY_MODE, &[Flag::DATA_ENTRY_INCRY_INCRX], 20)?;
 
         // Step 4: Set RAM window to cover the entire display
         log::info!("Setting RAM window to full display size");
-
-        // X address: 0 to (WIDTH/8 - 1) = 0 to 15 for 128 pixel width
-        self.interface.cmd(Cmd::SET_RAMX_START_END)?;
-        self.interface.data(&[0x00, ((WIDTH / 8) - 1) as u8])?;
-        self.interface.delay.delay_ms(20);
-
-        // Y address: 0 to (HEIGHT - 1) = 0 to 295 for 296 pixel height
-        // Remember Y address is little-endian (LSB first)
-        self.interface.cmd(Cmd::SET_RAMY_START_END)?;
-        self.interface.data(&[
-            0x00,
-            0x00,                      // Y start = 0 (LSB, MSB)
-            ((HEIGHT - 1) as u8),      // Y end LSB (295 & 0xFF = 0x27)
-            ((HEIGHT - 1) >> 8) as u8, // Y end MSB (295 >> 8 = 0x01)
-        ])?;
+        self.set_full_ram_window()?;
         self.interface.delay.delay_ms(20);
 
         // Step 5: Set RAM address counter to (0,0) starting position
@@ -1372,42 +1423,23 @@ where
         let total_bytes = u32::from(WIDTH) / 8 * u32::from(HEIGHT);
         log::info!("Writing {} bytes of WHITE (0xFF) data", total_bytes);
 
-        let chunk_size = 64;
-        for i in 0..total_bytes.div_ceil(chunk_size) {
-            let remaining = total_bytes - i * chunk_size;
-            let bytes_to_write = remaining.min(chunk_size);
-
-            if bytes_to_write > 0 {
-                if i % 10 == 0 {
-                    log::info!(
-                        "Writing chunk {}/{}",
-                        i + 1,
-                        total_bytes.div_ceil(chunk_size)
-                    );
-                }
-                self.interface.data_x_times(0xFF, bytes_to_write)?;
-            }
-        }
+        self.write_repeated_byte_chunked(0xFF, total_bytes, 64, true)?;
         self.interface.delay.delay_ms(50);
 
         // Step 7: Configure border to white
         log::info!("Setting border to white");
-        self.interface.cmd(Cmd::BORDER_WAVEFORM_CONTROL)?;
-        self.interface
-            .data(&[Flag::BORDER_WAVEFORM_FIXED_BITS | Flag::BORDER_WAVEFORM_WHITE])?;
+        self.set_border_waveform(true)?;
         self.interface.delay.delay_ms(20);
 
         // Step 8: Display update sequence
         log::info!("Starting display update sequence");
 
         // Display update control 1 - use B/W RAM only
-        self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL1)?;
-        self.interface.data(&[Flag::DISPLAY_UPDATE_BW_RAM])?;
+        self.cmd_data(Cmd::DISPLAY_UPDATE_CTRL1, &[Flag::DISPLAY_UPDATE_BW_RAM])?;
         self.interface.delay.delay_ms(20);
 
         // Display update control 2 - full update
-        self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
-        self.interface.data(&[Flag::DISPLAY_UPDATE_FULL])?;
+        self.cmd_data(Cmd::DISPLAY_UPDATE_CTRL2, &[Flag::DISPLAY_UPDATE_FULL])?;
         self.interface.delay.delay_ms(20);
 
         // Master activation - start update
@@ -1521,8 +1553,7 @@ where
         self.trigger_display_update(Flag::DISPLAY_UPDATE_FAST)?; // Arduino uses 0xB1 for fast refresh
 
         // Set temperature parameter
-        self.interface.cmd(Cmd::TEMP_CONTROL_WRITE)?; // Write temperature parameter
-        self.interface.data(&[0x64, 0x00])?;
+        self.cmd_data(Cmd::TEMP_CONTROL_WRITE, &[0x64, 0x00])?; // Write temperature parameter
 
         self.trigger_display_update(Flag::DISPLAY_UPDATE_PARTIAL_1)?; // Arduino uses 0x91
 
@@ -1546,39 +1577,17 @@ where
 
         // Set border
         log::info!("Setting border to white");
-        self.interface.cmd(Cmd::BORDER_WAVEFORM_CONTROL)?;
-        self.interface.data(&[Flag::BORDER_WAVEFORM_WHITE])?; // White border
+        self.set_border_waveform(true)?;
 
         // Write to RAM
         log::info!("Writing image data to RAM (with inversion)");
         self.interface.cmd(Cmd::WRITE_BW_DATA)?; // Write to RAM (register 24h)
 
-        // Write data in smaller chunks to avoid overwhelming the SPI driver
-        // and to provide progress updates
-        const CHUNK_SIZE: usize = 128; // Process 128 bytes at a time
-        let total_chunks = image_data.len().div_ceil(CHUNK_SIZE);
-
-        for (chunk_idx, chunk) in image_data.chunks(CHUNK_SIZE).enumerate() {
-            // Log progress every 8 chunks
-            if chunk_idx % 8 == 0 {
-                log::info!(
-                    "Writing chunk {}/{} ({:.1}%)",
-                    chunk_idx + 1,
-                    total_chunks,
-                    100.0 * (chunk_idx + 1) as f32 / total_chunks as f32
-                );
-            }
-
-            // Process each byte in the chunk - TRY WITHOUT INVERSION
-            for &byte in chunk {
-                // Try WITHOUT inverting to fix all-black display issue
-                self.interface.data(&[byte])?; // Send without inverting
-            }
-        }
+        // Write data in smaller chunks using helper
+        self.write_data_chunked(image_data, 128, true)?;
 
         // Update display
-        self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
-        self.interface.data(&[Flag::DISPLAY_UPDATE_FULL])?;
+        self.cmd_data(Cmd::DISPLAY_UPDATE_CTRL2, &[Flag::DISPLAY_UPDATE_FULL])?;
 
         // Add a small delay between commands
         for _ in 0..1000 {
