@@ -39,7 +39,7 @@ jobs:
       - name: Run command
         run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
       - name: Archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: binaries
           path: binaries
