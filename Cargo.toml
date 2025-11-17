@@ -21,7 +21,7 @@ experimental = ["esp-idf-svc/experimental"]
 log = "0.4.28"
 anyhow = "1.0.100"
 futures = "0.3.0"
-embedded-svc = { version = "0.26.0" }
+embedded-svc = { version = "0.28.0" }
 heapless = { version = "0.7" }
 
 # https://github.com/esp-rs/esp-idf-svc
