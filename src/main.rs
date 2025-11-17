@@ -4,7 +4,9 @@ use std::time::Duration;
 use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::{prelude::*, text::Text};
+use input::{Button, ButtonEvent, DialEvent, InputEvent, InputManager};
 
+mod input;
 mod ssd1680;
 mod wifi;
 
@@ -23,7 +25,7 @@ use embedded_graphics::mono_font::{
 
 use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::peripherals::Peripherals;
-use wifi::{connect_to_wifi, get_wifi_status, WifiConfig, WifiManager, WifiNetwork, AuthMethod};
+use wifi::{connect_to_wifi, get_wifi_status, AuthMethod, WifiManager, WifiNetwork};
 
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::prelude::*;
@@ -154,6 +156,26 @@ fn main() -> anyhow::Result<()> {
     // Keep the WiFi manager in scope
     let _wifi_manager = wifi_manager;
 
+    // Initialize input manager with buttons and dial
+    log::info!("Initializing input system...");
+    let mut input_manager = InputManager::new(
+        pins.gpio1.into_input().unwrap(), // Exit
+        pins.gpio2.into_input().unwrap(), // Menu
+        pins.gpio6.into_input().unwrap(), // Up
+        pins.gpio4.into_input().unwrap(), // Down
+        pins.gpio5.into_input().unwrap(), // Confirm
+        pins.gpio3.into_input().unwrap(), // Reset
+        // Uncomment and adjust these when you have the dial connected
+        // Some((
+        //     pins.gpio7.into_input().unwrap(),  // CLK
+        //     pins.gpio8.into_input().unwrap(),  // DT
+        //     pins.gpio9.into_input().unwrap(),  // SW
+        // )),
+        None, // No dial for now
+    )
+    .expect("Failed to initialize input manager");
+    log::info!("Input system initialized");
+
     // Configure SPI to match Arduino example exactly
     log::info!("Configuring SPI with Arduino-compatible settings");
     let mut driver = spi::SpiDeviceDriver::new_single(
@@ -234,19 +256,15 @@ fn main() -> anyhow::Result<()> {
     // Create display buffer
     log::info!("Creating display buffer with date and WiFi status");
     let mut display = Display2in13::new();
-    
+
     // Draw WiFi status in the top-right corner
     let text_style = MonoTextStyleBuilder::new()
         .font(&FONT_5X8)
         .text_color(BinaryColor::On)
         .build();
-    
+
     // Prepare WiFi status text
-    let wifi_text = Text::new(
-        &wifi_status,
-        Point::new(200, 10),
-        text_style,
-    );
+    let wifi_text = Text::new(&wifi_status, Point::new(200, 10), text_style);
     display.draw(&wifi_text).ok();
     // Use Rotate270 to match the physical RAM orientation used by raw image data
     // The raw logo image is pre-rotated for physical display (128×296)
@@ -324,19 +342,76 @@ fn main() -> anyhow::Result<()> {
     let reset_reason = esp_idf_svc::hal::reset::ResetReason::get();
     log::info!("Reset reason: {:?}", reset_reason);
 
-    /*
+    // Main application loop
+    log::info!("Entering main loop");
+    loop {
+        // Process input events
+        while let Some(event) = input_manager.check_events() {
+            match event {
+                InputEvent::Button(button_evt) => match button_evt {
+                    ButtonEvent::Pressed(button) => {
+                        log::info!("Button pressed: {:?}", button);
+                        // Handle button press
+                        match button {
+                            Button::Up => {
+                                // Handle up button
+                            }
+                            Button::Down => {
+                                // Handle down button
+                            }
+                            Button::Confirm => {
+                                // Handle confirm button
+                            }
+                            Button::Menu => {
+                                // Handle menu button
+                            }
+                            Button::Exit => {
+                                // Handle exit button
+                            }
+                            Button::Reset => {
+                                // Handle reset button
+                            }
+                        }
+                    }
+                    ButtonEvent::Released(button) => {
+                        log::debug!("Button released: {:?}", button);
+                    }
+                    ButtonEvent::LongPress(button) => {
+                        log::info!("Long press: {:?}", button);
+                        // Handle long press
+                    }
+                },
+                InputEvent::Dial(dial_evt) => match dial_evt {
+                    DialEvent::Rotated(direction) => {
+                        log::info!("Dial rotated: {:?}", direction);
+                        // Handle dial rotation
+                    }
+                    DialEvent::Pressed => {
+                        log::info!("Dial button pressed");
+                        // Handle dial button press
+                    }
+                    DialEvent::Released => {
+                        log::debug!("Dial button released");
+                    }
+                },
+            }
+        }
 
-    thread::sleep(time::Duration::from_millis(1000));
+        // Your application logic here
+        // This is just a placeholder
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 
     let sleep_micros = 2_000_000;
     unsafe {
         esp_idf_svc::sys::esp_sleep_enable_timer_wakeup(sleep_micros);
 
-        log::info!("Going to deep sleep for {} seconds", sleep_micros / 1_000_000);
+        log::info!(
+            "Going to deep sleep for {} seconds",
+            sleep_micros / 1_000_000
+        );
         esp_idf_svc::sys::esp_deep_sleep_start();
-        // Software reset!
     }
-    */
     Ok(())
 }
 
