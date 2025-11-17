@@ -20,9 +20,21 @@ experimental = ["esp-idf-svc/experimental"]
 [dependencies]
 log = "0.4.28"
 anyhow = "1.0.100"
+futures = "0.3.0"
+embedded-svc = { version = "0.26.0", features = ["wifi"] }
 
 # https://github.com/esp-rs/esp-idf-svc
-esp-idf-svc = { version = "0.50.1", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
+esp-idf-svc = { version = "0.50.1", features = [
+    "critical-section",
+    "embassy-time-driver",
+    "embassy-sync",
+    "wifi",
+    "nvs-flash",
+    "nvs",
+    "http-client",
+    "std",
+    "std_net",
+]}
 
 # https://github.com/embedded-graphics/embedded-graphics
 embedded-graphics = "0.8.1"

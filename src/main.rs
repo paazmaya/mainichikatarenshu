@@ -1,10 +1,12 @@
 use anyhow::Ok;
+use std::time::Duration;
 
 use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::{prelude::*, text::Text};
 
 mod ssd1680;
+mod wifi;
 
 pub use crate::ssd1680::cmd::Cmd;
 pub use crate::ssd1680::color::Color;
@@ -21,6 +23,7 @@ use embedded_graphics::mono_font::{
 
 use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use wifi::{connect_to_wifi, get_wifi_status, WifiConfig, WifiManager, WifiNetwork, AuthMethod};
 
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::prelude::*;
@@ -118,6 +121,39 @@ fn main() -> anyhow::Result<()> {
     let current_date = get_rtc_date();
     log::info!("Current RTC date: {}", current_date);
 
+    // Define known WiFi networks (add your networks here)
+    let known_networks = &[
+        WifiNetwork::new("HomeWiFi", "home_password"),
+        WifiNetwork::new("WorkWiFi", "work_password"),
+        WifiNetwork::new("GuestNetwork", "guest_password"),
+        // Add more networks as needed
+    ];
+
+    // Connect to WiFi
+    log::info!("Scanning for known WiFi networks...");
+    let (wifi_status, wifi_manager) = {
+        let mut manager = WifiManager::new(known_networks);
+        match manager.connect(peripherals.modem) {
+            Ok(_) => {
+                if let Some(network) = manager.get_current_network() {
+                    let status = format!("Connected to {}", network.ssid);
+                    log::info!("WiFi: {}", status);
+                    (status, Some(manager))
+                } else {
+                    ("WiFi: No known networks".to_string(), None)
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("WiFi: {}", e);
+                log::error!("{}", error_msg);
+                (error_msg, None)
+            }
+        }
+    };
+
+    // Keep the WiFi manager in scope
+    let _wifi_manager = wifi_manager;
+
     // Configure SPI to match Arduino example exactly
     log::info!("Configuring SPI with Arduino-compatible settings");
     let mut driver = spi::SpiDeviceDriver::new_single(
@@ -196,8 +232,22 @@ fn main() -> anyhow::Result<()> {
     delay.delay_ms(500);
 
     // Create display buffer
-    log::info!("Creating display buffer with date");
+    log::info!("Creating display buffer with date and WiFi status");
     let mut display = Display2in13::new();
+    
+    // Draw WiFi status in the top-right corner
+    let text_style = MonoTextStyleBuilder::new()
+        .font(&FONT_5X8)
+        .text_color(BinaryColor::On)
+        .build();
+    
+    // Prepare WiFi status text
+    let wifi_text = Text::new(
+        &wifi_status,
+        Point::new(200, 10),
+        text_style,
+    );
+    display.draw(&wifi_text).ok();
     // Use Rotate270 to match the physical RAM orientation used by raw image data
     // The raw logo image is pre-rotated for physical display (128×296)
     display.set_rotation(DisplayRotation::Rotate270);
