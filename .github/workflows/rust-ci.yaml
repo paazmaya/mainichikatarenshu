@@ -27,7 +27,7 @@ jobs:
             args: --all-targets --all-features --workspace -- -D warnings
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: Setup Rust
         uses: esp-rs/xtensa-toolchain@v1.6
         with:
