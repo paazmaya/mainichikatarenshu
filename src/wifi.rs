@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use esp_idf_svc::wifi::{ClientConfiguration, Configuration};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::{EspNvsPartition, NvsDefault};
-use esp_idf_svc::wifi::{BlockingWifi, EspWifi, WifiDeviceId};
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{info, warn};
 
 // Re-export AuthMethod for public use

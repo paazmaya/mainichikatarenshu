@@ -24,7 +24,7 @@ use embedded_graphics::mono_font::{
 
 use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::peripherals::Peripherals;
-use wifi::{get_wifi_status, AuthMethod, WifiManager, WifiNetwork};
+use wifi::{WifiManager, WifiNetwork};
 
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::prelude::*;
@@ -161,13 +161,6 @@ fn main() -> anyhow::Result<()> {
         pins.gpio4, // Down
         pins.gpio5, // Confirm
         pins.gpio3, // Reset
-        // Uncomment and adjust these when you have the dial connected
-        // Some((
-        //     pins.gpio7,  // CLK
-        //     pins.gpio8,  // DT
-        //     pins.gpio9,  // SW
-        // )),
-        None::<(esp_idf_svc::hal::gpio::Gpio0, esp_idf_svc::hal::gpio::Gpio0, esp_idf_svc::hal::gpio::Gpio0)>, // No dial for now
     )
     .expect("Failed to initialize input manager");
     log::info!("Input system initialized");
