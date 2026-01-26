@@ -4,14 +4,16 @@
 //! with proper debouncing and event queuing.
 
 use anyhow::Result;
-use embedded_hal::digital::blocking::InputPin;
+use esp_idf_svc::hal::gpio::{InputPin, OutputPin};
 use esp_idf_svc::hal::{
     delay::FreeRtos,
     gpio::{self, Input, InterruptType, PinDriver, Pull},
-    task::Notification,
 };
+use esp_idf_svc::hal::task::notification::Notification;
 use log::{info, warn};
+use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 // Re-export the public types
 pub mod types;
@@ -21,40 +23,71 @@ pub use types::*;
 const DEBOUNCE_MS: u32 = 50; // Debounce time in milliseconds
 const LONG_PRESS_MS: u32 = 1000; // Long press duration in milliseconds
 
+// Trait objects for dynamic dispatch
+trait ButtonHandlerTrait {
+    fn take_event(&mut self) -> Option<ButtonEvent>;
+}
+
+trait DialTrait {
+    fn check_events(&mut self) -> Option<DialEvent>;
+}
+
 /// Main input manager that handles all input devices
 pub struct InputManager {
-    buttons: [ButtonHandler; 6],
-    dial: Option<Dial>,
+    buttons: [Box<dyn ButtonHandlerTrait>; 6],
+    dial: Option<Box<dyn DialTrait>>,
     notification: Notification,
+}
+
+impl<T: InputPin + OutputPin + 'static> ButtonHandlerTrait for ButtonHandler<T> {
+    fn take_event(&mut self) -> Option<ButtonEvent> {
+        self.update().ok()?;
+        self.event_queue.dequeue()
+    }
+}
+
+impl<T: InputPin + OutputPin + 'static, U: InputPin + OutputPin + 'static, V: InputPin + OutputPin + 'static> DialTrait for Dial<T, U, V> {
+    fn check_events(&mut self) -> Option<DialEvent> {
+        match self.notification.wait(0) {
+            Some(notification) => match notification.get() {
+                1 => Some(DialEvent::Rotated(DialDirection::Clockwise)),
+                2 => Some(DialEvent::Rotated(DialDirection::CounterClockwise)),
+                3 => Some(DialEvent::Pressed),
+                4 => Some(DialEvent::Released),
+                _ => None,
+            },
+            None => None,
+        }
+    }
 }
 
 impl InputManager {
     /// Create a new InputManager with the specified pins
     pub fn new(
-        exit_pin: gpio::Gpio1<Input>,
-        menu_pin: gpio::Gpio2<Input>,
-        up_pin: gpio::Gpio6<Input>,
-        down_pin: gpio::Gpio4<Input>,
-        conf_pin: gpio::Gpio5<Input>,
-        reset_pin: gpio::Gpio3<Input>,
+        exit_pin: impl InputPin + OutputPin + 'static,
+        menu_pin: impl InputPin + OutputPin + 'static,
+        up_pin: impl InputPin + OutputPin + 'static,
+        down_pin: impl InputPin + OutputPin + 'static,
+        conf_pin: impl InputPin + OutputPin + 'static,
+        reset_pin: impl InputPin + OutputPin + 'static,
         // Optional dial pins (CLK, DT, SW)
-        dial_pins: Option<(gpio::Gpio7<Input>, gpio::Gpio8<Input>, gpio::Gpio9<Input>)>,
+        dial_pins: Option<(impl InputPin + OutputPin + 'static, impl InputPin + OutputPin + 'static, impl InputPin + OutputPin + 'static)>,
     ) -> Result<Self> {
         let notification = Notification::new();
 
         // Initialize buttons
-        let buttons = [
-            ButtonHandler::new(Button::Exit, exit_pin, notification.notifier())?,
-            ButtonHandler::new(Button::Menu, menu_pin, notification.notifier())?,
-            ButtonHandler::new(Button::Up, up_pin, notification.notifier())?,
-            ButtonHandler::new(Button::Down, down_pin, notification.notifier())?,
-            ButtonHandler::new(Button::Confirm, conf_pin, notification.notifier())?,
-            ButtonHandler::new(Button::Reset, reset_pin, notification.notifier())?,
+        let buttons: [Box<dyn ButtonHandlerTrait>; 6] = [
+            Box::new(ButtonHandler::new(Button::Exit, exit_pin, Notification::new())?),
+            Box::new(ButtonHandler::new(Button::Menu, menu_pin, Notification::new())?),
+            Box::new(ButtonHandler::new(Button::Up, up_pin, Notification::new())?),
+            Box::new(ButtonHandler::new(Button::Down, down_pin, Notification::new())?),
+            Box::new(ButtonHandler::new(Button::Confirm, conf_pin, Notification::new())?),
+            Box::new(ButtonHandler::new(Button::Reset, reset_pin, Notification::new())?),
         ];
 
         // Initialize dial if pins are provided
         let dial = if let Some((clk_pin, dt_pin, sw_pin)) = dial_pins {
-            Some(Dial::new(clk_pin, dt_pin, sw_pin, notification.notifier())?)
+            Some(Box::new(Dial::new(clk_pin, dt_pin, sw_pin, Notification::new())?) as Box<dyn DialTrait>)
         } else {
             None
         };
@@ -109,20 +142,20 @@ impl InputManager {
 }
 
 /// Handler for individual buttons
-struct ButtonHandler {
+struct ButtonHandler<T: InputPin + OutputPin> {
     button: Button,
-    pin: PinDriver<'static, Input>,
+    pin: PinDriver<'static, T, Input>,
     last_state: ButtonState,
     last_change: u32,
     event_queue: heapless::spsc::Queue<ButtonEvent, 8>,
     notification: Arc<Notification>,
 }
 
-impl ButtonHandler {
+impl<T: InputPin + OutputPin + 'static> ButtonHandler<T> {
     fn new(
         button: Button,
-        pin: impl InputPin + 'static,
-        notification: esp_idf_svc::hal::task::notify::Notification,
+        pin: T,
+        notification: Notification,
     ) -> Result<Self> {
         let mut pin = PinDriver::input(pin)?;
         pin.set_pull(Pull::Up)?;
@@ -130,15 +163,6 @@ impl ButtonHandler {
         pin.enable_interrupt()?;
 
         let notification = Arc::new(notification);
-        let notification_clone = notification.clone();
-
-        // Set up interrupt handler in a separate thread
-        std::thread::spawn(move || {
-            while let Ok(_) = pin.wait_for_any_edge() {
-                // Notify the main thread
-                notification_clone.notify(0);
-            }
-        });
 
         Ok(Self {
             button,
@@ -151,8 +175,11 @@ impl ButtonHandler {
     }
 
     fn update(&mut self) -> Result<()> {
-        let current_time = esp_idf_svc::hal::task::current_tick() as u32;
-        let current_state = if self.pin.is_low()? {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u32;
+        let current_state = if self.pin.is_low() {
             ButtonState::Pressed
         } else {
             ButtonState::Released
@@ -176,7 +203,9 @@ impl ButtonHandler {
                 }
 
                 // Notify the main thread
-                self.notification.notify(0);
+                unsafe {
+                    self.notification.notifier().notify(NonZeroU32::new(0).unwrap());
+                }
             }
         } else if current_state == ButtonState::Pressed
             && current_time - self.last_change > LONG_PRESS_MS
@@ -187,35 +216,32 @@ impl ButtonHandler {
                 .enqueue(ButtonEvent::LongPress(self.button))
                 .is_ok()
             {
-                self.notification.notify(0);
+                unsafe {
+                    self.notification.notifier().notify(NonZeroU32::new(0).unwrap());
+                }
             }
         }
 
         Ok(())
     }
-
-    fn take_event(&mut self) -> Option<ButtonEvent> {
-        self.update().ok()?;
-        self.event_queue.dequeue()
-    }
 }
 
 /// Handler for rotary encoder dial
-struct Dial {
-    clk_pin: PinDriver<'static, Input>,
-    dt_pin: PinDriver<'static, Input>,
-    sw_pin: PinDriver<'static, Input>,
+struct Dial<T: InputPin + OutputPin, U: InputPin + OutputPin, V: InputPin + OutputPin> {
+    clk_pin: PinDriver<'static, T, Input>,
+    dt_pin: PinDriver<'static, U, Input>,
+    sw_pin: PinDriver<'static, V, Input>,
     last_clk_state: bool,
     last_sw_state: bool,
     notification: Arc<Notification>,
 }
 
-impl Dial {
+impl<T: InputPin + OutputPin + 'static, U: InputPin + OutputPin + 'static, V: InputPin + OutputPin + 'static> Dial<T, U, V> {
     pub fn new(
-        clk_pin: impl InputPin + 'static,
-        dt_pin: impl InputPin + 'static,
-        sw_pin: impl InputPin + 'static,
-        notification: esp_idf_svc::hal::task::notify::Notification,
+        clk_pin: T,
+        dt_pin: U,
+        sw_pin: V,
+        notification: Notification,
     ) -> Result<Self> {
         let mut clk = PinDriver::input(clk_pin)?;
         let mut dt = PinDriver::input(dt_pin)?;
@@ -225,61 +251,18 @@ impl Dial {
         dt.set_pull(Pull::Up)?;
         sw.set_pull(Pull::Up)?;
 
-        let clk_state = clk.is_high()?;
-        let sw_state = sw.is_low()?;
+        let clk_state = clk.is_high();
+        let sw_state = sw.is_low();
 
         let notification = Arc::new(notification);
-        let notification_clone = notification.clone();
-
-        // Spawn a thread to monitor the dial
-        std::thread::spawn(move || {
-            let mut last_clk = clk_state;
-            let mut last_sw = sw_state;
-
-            loop {
-                let clk_state = clk.is_high().unwrap_or(last_clk);
-                let dt_state = dt.is_high().unwrap_or(!last_clk);
-                let sw_state = sw.is_low().unwrap_or(last_sw);
-
-                // Check for rotation
-                if clk_state != last_clk {
-                    if clk_state != dt_state {
-                        // Clockwise rotation
-                        notification_clone.notify(1);
-                    } else {
-                        // Counter-clockwise rotation
-                        notification_clone.notify(2);
-                    }
-                    last_clk = clk_state;
-                }
-
-                // Check for button press
-                if sw_state != last_sw {
-                    notification_clone.notify(if sw_state { 3 } else { 4 });
-                    last_sw = sw_state;
-                }
-
-                FreeRtos::delay_ms(1);
-            }
-        });
 
         Ok(Self {
             clk_pin: clk,
             dt_pin: dt,
-            sw_pin,
+            sw_pin: sw,
             last_clk_state: clk_state,
             last_sw_state: sw_state,
             notification,
         })
-    }
-
-    pub fn check_events(&mut self) -> Option<DialEvent> {
-        match self.notification.try_wait() {
-            Some(1) => Some(DialEvent::Rotated(DialDirection::Clockwise)),
-            Some(2) => Some(DialEvent::Rotated(DialDirection::CounterClockwise)),
-            Some(3) => Some(DialEvent::Pressed),
-            Some(4) => Some(DialEvent::Released),
-            _ => None,
-        }
     }
 }

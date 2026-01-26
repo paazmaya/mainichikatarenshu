@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
-use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
+use esp_idf_svc::wifi::{ClientConfiguration, Configuration};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::{EspNvsPartition, NvsDefault};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi, WifiDeviceId};
 use log::{info, warn};
+
+// Re-export AuthMethod for public use
+pub use esp_idf_svc::wifi::AuthMethod;
 
 #[derive(Debug)]
 pub struct WifiNetwork<'a> {
@@ -44,7 +47,7 @@ impl<'a> WifiManager<'a> {
 
     pub fn connect(
         &mut self,
-        modem: impl std::convert::Into<esp_idf_hal::modem::Modem> + 'a,
+        modem: impl std::convert::Into<esp_idf_svc::hal::modem::Modem> + 'a,
     ) -> Result<()> {
         let sys_loop = EspSystemEventLoop::take()?;
         let nvs = EspNvsPartition::<NvsDefault>::take()?;
@@ -62,7 +65,7 @@ impl<'a> WifiManager<'a> {
 
         // Try to connect to any of the known networks that are available
         for network in self.networks.iter() {
-            if available_networks.contains(&network.ssid) {
+            if available_networks.contains(&network.ssid.to_string()) {
                 info!("Attempting to connect to network: {}", network.ssid);
 
                 if let Err(e) = self.connect_to_network(network) {
@@ -84,8 +87,8 @@ impl<'a> WifiManager<'a> {
         Err(anyhow::anyhow!("No known networks available"))
     }
 
-    fn scan_networks(&self) -> Result<Vec<String>> {
-        let wifi = self.wifi.as_ref().context("WiFi not initialized")?;
+    fn scan_networks(&mut self) -> Result<Vec<String>> {
+        let wifi = self.wifi.as_mut().context("WiFi not initialized")?;
 
         // Start WiFi in station mode for scanning
         wifi.set_configuration(&Configuration::Client(ClientConfiguration::default()))?;
@@ -93,7 +96,7 @@ impl<'a> WifiManager<'a> {
 
         // Scan for available networks
         let ap_infos = wifi.scan()?;
-        let available_networks: Vec<String> = ap_infos.iter().map(|ap| ap.ssid.clone()).collect();
+        let available_networks: Vec<String> = ap_infos.iter().map(|ap| ap.ssid.as_str().to_string()).collect();
 
         Ok(available_networks)
     }
@@ -102,8 +105,8 @@ impl<'a> WifiManager<'a> {
         let wifi = self.wifi.as_mut().context("WiFi not initialized")?;
 
         let wifi_config = Configuration::Client(ClientConfiguration {
-            ssid: network.ssid.into(),
-            password: network.password.into(),
+            ssid: heapless::String::<32>::try_from(network.ssid).unwrap_or_default(),
+            password: heapless::String::<64>::try_from(network.password).unwrap_or_default(),
             auth_method: network.auth_method,
             ..Default::default()
         });
@@ -118,7 +121,10 @@ impl<'a> WifiManager<'a> {
 
     pub fn get_ip_info(&self) -> Result<Option<esp_idf_svc::ipv4::IpInfo>> {
         let wifi = self.wifi.as_ref().context("WiFi not initialized")?;
-        wifi.wifi().sta_netif().get_ip_info()
+        match wifi.wifi().sta_netif().get_ip_info() {
+            Ok(ip_info) => Ok(Some(ip_info)),
+            Err(_) => Ok(None),
+        }
     }
 
     pub fn get_current_network(&self) -> Option<&'a WifiNetwork> {
@@ -130,26 +136,10 @@ impl<'a> WifiManager<'a> {
     }
 }
 
-// Helper function for backward compatibility
-pub fn connect_to_wifi(
-    ssid: &str,
-    password: &str,
-    modem: impl std::convert::Into<esp_idf_hal::modem::Modem>,
-) -> Result<Box<EspWifi<'static>>> {
-    let networks = &[WifiNetwork::new(ssid, password)];
-    let mut manager = WifiManager::new(networks);
-    manager.connect(modem)?;
-
-    // Convert the managed WiFi instance back to a raw EspWifi
-    Ok(Box::new(manager.wifi.unwrap().into_inner()))
-}
-
-pub fn get_wifi_status(wifi: &EspWifi<'_>) -> String {
+pub fn get_wifi_status(wifi: &mut EspWifi<'_>) -> String {
     if let Ok(ap_infos) = wifi.scan() {
         for ap in ap_infos {
-            if let Some(auth) = ap.auth_method.open() {
-                return format!("SSID: {}, Signal: {}%", ap.ssid, ap.signal_strength,);
-            }
+            return format!("SSID: {}, Signal: {}%", ap.ssid, ap.signal_strength);
         }
     }
     "Not connected".to_string()

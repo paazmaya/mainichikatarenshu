@@ -1,5 +1,4 @@
 use anyhow::Ok;
-use std::time::Duration;
 
 use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -25,7 +24,7 @@ use embedded_graphics::mono_font::{
 
 use esp_idf_svc::hal::delay::Delay;
 use esp_idf_svc::hal::peripherals::Peripherals;
-use wifi::{connect_to_wifi, get_wifi_status, AuthMethod, WifiManager, WifiNetwork};
+use wifi::{get_wifi_status, AuthMethod, WifiManager, WifiNetwork};
 
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::prelude::*;
@@ -135,21 +134,18 @@ fn main() -> anyhow::Result<()> {
     log::info!("Scanning for known WiFi networks...");
     let (wifi_status, wifi_manager) = {
         let mut manager = WifiManager::new(known_networks);
-        match manager.connect(peripherals.modem) {
-            Ok(_) => {
-                if let Some(network) = manager.get_current_network() {
-                    let status = format!("Connected to {}", network.ssid);
-                    log::info!("WiFi: {}", status);
-                    (status, Some(manager))
-                } else {
-                    ("WiFi: No known networks".to_string(), None)
-                }
+        if manager.connect(peripherals.modem).is_ok() {
+            if let Some(network) = manager.get_current_network() {
+                let status = format!("Connected to {}", network.ssid);
+                log::info!("WiFi: {}", status);
+                (status, Some(manager))
+            } else {
+                ("WiFi: No known networks".to_string(), None)
             }
-            Err(e) => {
-                let error_msg = format!("WiFi: {}", e);
-                log::error!("{}", error_msg);
-                (error_msg, None)
-            }
+        } else {
+            let error_msg = format!("WiFi: Connection failed");
+            log::warn!("{}", error_msg);
+            (error_msg, None)
         }
     };
 
@@ -159,19 +155,19 @@ fn main() -> anyhow::Result<()> {
     // Initialize input manager with buttons and dial
     log::info!("Initializing input system...");
     let mut input_manager = InputManager::new(
-        pins.gpio1.into_input().unwrap(), // Exit
-        pins.gpio2.into_input().unwrap(), // Menu
-        pins.gpio6.into_input().unwrap(), // Up
-        pins.gpio4.into_input().unwrap(), // Down
-        pins.gpio5.into_input().unwrap(), // Confirm
-        pins.gpio3.into_input().unwrap(), // Reset
+        pins.gpio1, // Exit
+        pins.gpio2, // Menu
+        pins.gpio6, // Up
+        pins.gpio4, // Down
+        pins.gpio5, // Confirm
+        pins.gpio3, // Reset
         // Uncomment and adjust these when you have the dial connected
         // Some((
-        //     pins.gpio7.into_input().unwrap(),  // CLK
-        //     pins.gpio8.into_input().unwrap(),  // DT
-        //     pins.gpio9.into_input().unwrap(),  // SW
+        //     pins.gpio7,  // CLK
+        //     pins.gpio8,  // DT
+        //     pins.gpio9,  // SW
         // )),
-        None, // No dial for now
+        None::<(esp_idf_svc::hal::gpio::Gpio0, esp_idf_svc::hal::gpio::Gpio0, esp_idf_svc::hal::gpio::Gpio0)>, // No dial for now
     )
     .expect("Failed to initialize input manager");
     log::info!("Input system initialized");
@@ -265,7 +261,7 @@ fn main() -> anyhow::Result<()> {
 
     // Prepare WiFi status text
     let wifi_text = Text::new(&wifi_status, Point::new(200, 10), text_style);
-    display.draw(&wifi_text).ok();
+    wifi_text.draw(&mut display).ok();
     // Use Rotate270 to match the physical RAM orientation used by raw image data
     // The raw logo image is pre-rotated for physical display (128×296)
     display.set_rotation(DisplayRotation::Rotate270);
