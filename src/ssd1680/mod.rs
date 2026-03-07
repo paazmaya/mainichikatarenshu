@@ -81,6 +81,8 @@ pub mod cmd;
 pub mod flag;
 pub mod graphics;
 pub mod pins;
+pub mod text;
+pub mod display_utils;
 
 /// Maximum display height this driver supports
 #[allow(dead_code)]

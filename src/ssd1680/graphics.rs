@@ -4,6 +4,7 @@ use crate::ssd1680::color::Color;
 use crate::ssd1680::{HEIGHT, WIDTH};
 use display_interface::DisplayError;
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
+use embedded_graphics::prelude::Primitive;
 
 /// Displayrotation
 #[derive(Clone, Copy, Default)]
@@ -120,6 +121,11 @@ impl Display2in13 {
             rotation: DisplayRotation::default(),
             is_inverted: false,
         }
+    }
+
+    /// Create a black & white display buffer (alias for new())
+    pub fn bw() -> Self {
+        Self::new()
     }
 }
 

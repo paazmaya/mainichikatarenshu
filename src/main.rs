@@ -8,6 +8,14 @@ use input::{Button, ButtonEvent, DialEvent, InputEvent, InputManager};
 mod input;
 mod ssd1680;
 mod wifi;
+mod kata_display;
+#[cfg(test)]
+mod display_tests;
+
+// Import the new text and display utilities
+use ssd1680::text::{TextRenderer, TextConfig, TextAlignment};
+use ssd1680::display_utils::{DisplayManager, presets};
+use kata_display::{KataDisplayManager, TrainingStats};
 
 pub use crate::ssd1680::cmd::Cmd;
 pub use crate::ssd1680::color::Color;
@@ -242,49 +250,37 @@ fn main() -> anyhow::Result<()> {
     }
     delay.delay_ms(500);
 
-    // Create display buffer
-    log::info!("Creating display buffer with date and WiFi status");
-    let mut display = Display2in13::new();
+    // Create display buffer using the new DisplayManager
+    log::info!("Creating display buffer with DisplayManager");
+    let mut display = DisplayManager::create_display();
 
-    // Draw WiFi status in the top-right corner
-    let text_style = MonoTextStyleBuilder::new()
-        .font(&FONT_5X8)
-        .text_color(BinaryColor::On)
-        .build();
+    // Clear display and prepare for new content
+    DisplayManager::clear_and_prepare(&mut display)
+        .expect("Failed to clear and prepare display");
 
-    // Prepare WiFi status text
-    let wifi_text = Text::new(&wifi_status, Point::new(200, 10), text_style);
-    wifi_text.draw(&mut display).ok();
-    // Use Rotate270 to match the physical RAM orientation used by raw image data
-    // The raw logo image is pre-rotated for physical display (128×296)
-    display.set_rotation(DisplayRotation::Rotate270);
+    // Show WiFi status using the new utility
+    if let Err(e) = DisplayManager::show_status_message(&mut display, &wifi_status, None) {
+        log::error!("Failed to show WiFi status: {:?}", e);
+    }
 
-    // Clear buffer to white (Off = white for this display)
-    display
-        .clear(BinaryColor::Off)
-        .expect("Failed to clear buffer");
-
-    // Get current date from RTC
+    // Display a kata reminder using the new application-specific display manager
     let date_text = get_rtc_date();
-
-    // Draw the date in large font
-    let text_style = MonoTextStyleBuilder::new()
-        .font(&ISO15_10)
-        .text_color(BinaryColor::On) // On = black pixels
-        .build();
-
-    Text::new(&date_text, Point::new(10, 30), text_style)
-        .draw(&mut display)
-        .expect("Failed to draw date");
-
-    // Add a label
-    let label_style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    Text::new("Current Date:", Point::new(10, 10), label_style)
-        .draw(&mut display)
-        .expect("Failed to draw label");
+    let time_text = "18:00".to_string(); // You can update this with actual time
+    let kata_name = "Heian Shodan"; // Example kata name
+    
+    log::info!("Displaying kata reminder: {} at {}", kata_name, time_text);
+    if let Err(e) = KataDisplayManager::show_kata_reminder(
+        &mut display,
+        &date_text,
+        &time_text,
+        kata_name,
+        Some(&wifi_status),
+    ) {
+        log::error!("Failed to show kata reminder: {:?}", e);
+    }
 
     // Send buffer to display using Arduino-compatible method
-    log::info!("Writing date buffer to display");
+    log::info!("Writing kata reminder buffer to display");
     if let Err(e) = ssd1680.write_buffer_and_update(display.buffer()) {
         log::error!("Failed to write and update buffer: {:?}", e);
         return Err(anyhow::anyhow!(
@@ -293,8 +289,8 @@ fn main() -> anyhow::Result<()> {
         ));
     }
 
-    log::info!("DATE DISPLAYED - CHECK SCREEN!");
-    log::info!("Should show: {}", date_text);
+    log::info!("KATA REMINDER DISPLAYED - CHECK SCREEN!");
+    log::info!("Should show: {} for kata: {}", date_text, kata_name);
     delay.delay_ms(5000);
 
     // Now display the logo image (pre-converted at build time)
@@ -390,18 +386,6 @@ fn main() -> anyhow::Result<()> {
         // This is just a placeholder
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-
-    let sleep_micros = 2_000_000;
-    unsafe {
-        esp_idf_svc::sys::esp_sleep_enable_timer_wakeup(sleep_micros);
-
-        log::info!(
-            "Going to deep sleep for {} seconds",
-            sleep_micros / 1_000_000
-        );
-        esp_idf_svc::sys::esp_deep_sleep_start();
-    }
-    Ok(())
 }
 
 /*
