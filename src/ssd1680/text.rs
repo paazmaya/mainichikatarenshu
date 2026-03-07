@@ -7,9 +7,11 @@ use embedded_graphics::mono_font::{iso_8859_15::FONT_5X8, MonoFont, MonoTextStyl
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::{prelude::*, text::Text};
 use crate::ssd1680::graphics::{Display, DisplayRotation};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 /// Text alignment options
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum TextAlignment {
     /// Align text to the left edge
     #[default]
@@ -304,7 +306,7 @@ impl TextRenderer {
     /// # Returns
     ///
     /// Vector of wrapped lines
-    fn wrap_text(text: &str, font: &MonoFont, max_width: u32) -> Vec<String> {
+    pub fn wrap_text(text: &str, font: &MonoFont, max_width: u32) -> Vec<String> {
         let mut lines = Vec::new();
         
         // First split by explicit newlines

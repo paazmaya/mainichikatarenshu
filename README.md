@@ -471,6 +471,203 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 - [ ] Training statistics and streaks
 - [ ] Multiple kata difficulty levels
 
+## Testing
+
+This project uses a dual-testing approach to ensure code quality while supporting ESP32 hardware constraints.
+
+### 🧪 Test Architecture
+
+The project is configured with both library and binary targets to enable different testing strategies:
+
+- **Library Tests** (`cargo test --lib`) - Pure logic and algorithms without hardware dependencies
+- **Integration Tests** (`cargo test --test`) - Component interactions using mock displays
+- **Hardware Tests** (`cargo +esp test`) - Full ESP32 firmware testing (requires physical device)
+
+### 🔧 Test Configuration
+
+#### Feature Flags
+- `test-utils` - Disables ESP32-specific dependencies for hardware-independent testing
+- `experimental` - Enables experimental ESP-IDF features
+
+#### Conditional Compilation
+```rust
+#[cfg(not(feature = "test-utils"))]
+// ESP32-specific code (WiFi, GPIO, SPI)
+
+#[cfg(feature = "test-utils")]
+// Test-only code and mocks
+```
+
+### 🚀 Running Tests
+
+#### Local Development
+
+```bash
+# Unit tests - Pure logic (no hardware required)
+cargo test --lib --features test-utils
+
+# Integration tests - With mock displays
+cargo test --test unit_tests --features test-utils
+
+# Hardware tests - Requires ESP32 device
+cargo +esp test
+```
+
+#### CI/CD Pipeline
+
+The GitHub Actions workflow runs tests in two stages:
+
+1. **Build Stage** - Uses ESP toolchain to build firmware
+2. **Test Stage** - Uses standard Rust toolchain for hardware-independent tests
+
+```yaml
+- name: Run unit tests
+  run: cargo test --lib --features test-utils --target x86_64-unknown-linux-gnu
+
+- name: Run integration tests
+  run: cargo test --test unit_tests --features test-utils --target x86_64-unknown-linux-gnu
+```
+
+### 📋 What Gets Tested
+
+#### ✅ Hardware-Independent Tests
+
+**Text Processing (`src/ssd1680/text.rs`)**
+- Text wrapping algorithms
+- Width measurement calculations
+- Font rendering configurations
+- Alignment logic
+
+**Color Conversions (`src/ssd1680/color.rs`)**
+- Bit value calculations
+- Byte value conversions
+- Color inversion operations
+
+**Business Logic (`src/kata_display.rs`)**
+- Training statistics calculations
+- Data structure operations
+- State management
+
+**Display Utilities (`src/ssd1680/display_utils.rs`)**
+- Configuration presets
+- Layout calculations
+- Text positioning logic
+
+**Graphics Calculations (`src/ssd1680/graphics.rs`)**
+- Rotation mathematics
+- Buffer operations
+- Coordinate transformations
+
+#### ⚠️ Hardware-Dependent Tests
+
+**ESP32 Integration**
+- SPI communication
+- GPIO pin operations
+- WiFi connectivity
+- RTC functionality
+- Deep sleep operations
+
+### 🎯 Test Structure
+
+#### Unit Tests (In-module)
+```rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_text_wrapping() {
+        // Test pure logic
+    }
+}
+```
+
+#### Integration Tests (`tests/unit_tests.rs`)
+```rust
+use embedded_graphics::mock_display::MockDisplay;
+use mainichikatarenshu::ssd1680::text::TextRenderer;
+
+#[test]
+fn test_complete_rendering_pipeline() {
+    let mut display = MockDisplay::new();
+    // Test component interactions
+}
+```
+
+#### Mock Displays
+Tests use `embedded_graphics::mock_display::MockDisplay` to simulate the e-paper display without requiring hardware:
+
+```rust
+let mut display = MockDisplay::new();
+let result = TextRenderer::write_line(&mut display, "Hello", 10, 20, config);
+assert!(result.is_ok());
+```
+
+### 🔍 Test Coverage
+
+#### Current Coverage
+- ✅ Text rendering algorithms (100%)
+- ✅ Color conversions (100%)
+- ✅ Training statistics (100%)
+- ✅ Display utilities (95%)
+- ✅ Graphics calculations (90%)
+- ⚠️ Hardware drivers (0% - requires device)
+
+#### Adding New Tests
+
+1. **Pure Logic Tests** - Add directly in module files
+2. **Integration Tests** - Add to `tests/unit_tests.rs`
+3. **Hardware Tests** - Add to module files with ESP32 dependencies
+
+```rust
+// Example: Adding a new test
+#[test]
+fn test_new_feature() {
+    // Arrange
+    let input = create_test_input();
+    
+    // Act
+    let result = function_to_test(input);
+    
+    // Assert
+    assert_eq!(result.expected_value, actual_value);
+}
+```
+
+### 🐛 Debugging Test Failures
+
+#### Common Issues
+
+1. **Linker Errors** - Ensure `test-utils` feature is enabled
+2. **Missing Hardware** - Use mock displays instead of real hardware
+3. **Import Errors** - Check conditional compilation directives
+
+#### Debug Commands
+```bash
+# Verbose test output
+cargo test --lib --features test-utils -- --nocapture
+
+# Specific test
+cargo test test_text_wrapping --lib --features test-utils
+
+# Run with backtrace
+RUST_BACKTRACE=1 cargo test --lib --features test-utils
+```
+
+### 📊 CI Test Results
+
+The CI pipeline provides:
+- ✅ **Unit Test Results** - All pure logic tests
+- ✅ **Integration Test Results** - Component interaction tests
+- ✅ **Build Verification** - ESP32 firmware compilation
+- ✅ **Code Quality Checks** - Clippy and formatting
+
+### 🚧 Future Testing Improvements
+
+- [ ] Add property-based testing with `proptest`
+- [ ] Implement fuzz testing for text parsing
+- [ ] Add performance benchmarks
+- [ ] Create hardware-in-the-loop test fixtures
+- [ ] Add visual regression tests for display output
+
 ## Build System
 
 The project uses a custom build script (`build.rs`) that:

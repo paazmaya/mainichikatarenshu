@@ -12,8 +12,7 @@ runner = "espflash flash --monitor"
 rustflags = [
   # Extending time_t for ESP IDF 5: https://github.com/esp-rs/rust/issues/110
   "--cfg",  "espidf_time64",
-
-"-C", "default-linker-libraries"
+  "-C", "default-linker-libraries"
 ]
 
 [unstable]

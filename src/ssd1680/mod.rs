@@ -66,7 +66,6 @@
 //! - Based on [mbv/ssd1680](https://github.com/mbv/ssd1680) structure
 //!
 //!
-#![no_std]
 #![deny(missing_docs)]
 #![allow(clippy::pedantic)]
 #![allow(clippy::cast_possible_truncation)]
@@ -77,6 +76,7 @@
 pub mod color;
 pub mod driver;
 
+/// Command definitions for SSD1680
 pub mod cmd;
 pub mod flag;
 pub mod graphics;

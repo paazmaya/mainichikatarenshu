@@ -255,7 +255,7 @@ where
             // Allow watchdog reset between chunks by yielding
             if i > 0 && i % 100 == 0 {
                 // Allow other tasks to run and reset watchdog
-                std::hint::spin_loop();
+                core::hint::spin_loop();
             }
 
             self.spi

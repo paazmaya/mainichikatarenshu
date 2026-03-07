@@ -11,9 +11,10 @@ use esp_idf_svc::hal::{
 };
 use esp_idf_svc::hal::task::notification::Notification;
 use log::warn;
-use std::num::NonZeroU32;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use core::num::NonZeroU32;
+// use core::time::{SystemTime, UNIX_EPOCH, Duration};
 
 // Re-export the public types
 pub mod types;
@@ -238,18 +239,19 @@ impl<T: InputPin + OutputPin + 'static> ButtonHandler<T> {
         let notifier_clone = notifier.clone();
 
         // Set up interrupt handler in a separate thread
-        std::thread::spawn(move || {
-            loop {
-                // Simple polling approach to avoid move issues
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                // Just notify that there might be a change - the update method will handle debouncing
-                unsafe {
-                    if let Some(value) = NonZeroU32::new(0) {
-                        notifier_clone.notify(value);
-                    }
-                }
-            }
-        });
+        // TODO: Fix thread spawn for no-std compatibility
+        // std::thread::spawn(move || {
+        //     loop {
+        //         // Simple polling approach to avoid move issues
+        //         FreeRtos::delay_ms(Duration::from_millis(10).as_millis() as u32);
+        //         // Just notify that there might be a change - the update method will handle debouncing
+        //         unsafe {
+        //             if let Some(value) = NonZeroU32::new(0) {
+        //                 notifier_clone.notify(value);
+        //             }
+        //         }
+        //     }
+        // });
 
         Ok(Self {
             button,
@@ -262,10 +264,12 @@ impl<T: InputPin + OutputPin + 'static> ButtonHandler<T> {
     }
 
     fn update(&mut self) -> Result<()> {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| anyhow::anyhow!("Failed to get system time: {}", e))?
-            .as_millis() as u32;
+        // TODO: Fix time tracking for no-std compatibility
+        // let current_time = SystemTime::now()
+        //     .duration_since(UNIX_EPOCH)
+        //     .map_err(|e| anyhow::anyhow!("Failed to get system time: {}", e))?
+        //     .as_millis() as u32;
+        let current_time = 0; // Placeholder
         
         let current_state = self.pin.is_low();
 
@@ -318,7 +322,7 @@ impl<T: InputPin + OutputPin + 'static> ButtonHandler<T> {
 
 /// Handler for rotary encoder dial
 struct Dial<T: InputPin + OutputPin, U: InputPin + OutputPin, V: InputPin + OutputPin> {
-    _phantom: std::marker::PhantomData<(T, U, V)>,
+    _phantom: core::marker::PhantomData<(T, U, V)>,
     last_clk_state: bool,
     last_sw_state: bool,
     notification: Arc<Notification>,
@@ -352,51 +356,51 @@ impl<T: InputPin + OutputPin + 'static, U: InputPin + OutputPin + 'static, V: In
         let notifier_clone = notifier.clone();
 
         // Spawn a thread to monitor the dial
-        std::thread::spawn(move || {
-            let mut last_clk = clk_state;
-            let mut last_sw = sw_state;
-
-            loop {
-                let clk_state = clk.is_high();
-                let dt_state = dt.is_high();
-                let sw_state = sw.is_low();
+        // TODO: Fix thread spawn for no-std compatibility
+        // std::thread::spawn(move || {
+        //     let mut last_clk = clk_state;
+        //     let mut last_sw = sw_state;
+        //
+        //     loop {
+        //         let clk_state = clk.is_high();
+        //         let dt_state = dt.is_high();
+        //         let sw_state = sw.is_low();
 
                 // Check for rotation
-                if clk_state != last_clk {
-                    if clk_state != dt_state {
-                        // Clockwise rotation
-                        unsafe {
-                            if let Some(value) = NonZeroU32::new(1) {
-                                notifier_clone.notify(value);
-                            }
-                        }
-                    } else {
-                        // Counter-clockwise rotation
-                        unsafe {
-                            if let Some(value) = NonZeroU32::new(2) {
-                                notifier_clone.notify(value);
-                            }
-                        }
-                    }
-                    last_clk = clk_state;
-                }
+                // if clk_state != last_clk {
+                //     if clk_state != dt_state {
+                //         // Clockwise rotation
+                //         unsafe {
+                //             if let Some(value) = NonZeroU32::new(1) {
+                //                 notifier_clone.notify(value);
+                //             }
+                //         }
+                //     } else {
+                //         // Counter-clockwise rotation
+                //         unsafe {
+                //             if let Some(value) = NonZeroU32::new(2) {
+                //                 notifier_clone.notify(value);
+                //             }
+                //         }
+                //     }
+                //     last_clk = clk_state;
+                // }
 
-                // Check for button press
-                if sw_state != last_sw {
-                    unsafe {
-                        if let Some(value) = NonZeroU32::new(if sw_state { 3 } else { 4 }) {
-                            notifier_clone.notify(value);
-                        }
-                    }
-                    last_sw = sw_state;
-                }
+                // // Check for button press
+                // if sw_state != last_sw {
+                //     unsafe {
+                //         if let Some(value) = NonZeroU32::new(if sw_state { 3 } else { 4 }) {
+                //             notifier_clone.notify(value);
+                //         }
+                //     }
+                //     last_sw = sw_state;
+                // }
 
-                FreeRtos::delay_ms(1);
-            }
-        });
+                // FreeRtos::delay_ms(1);
+            // }
 
         Ok(Self {
-            _phantom: std::marker::PhantomData,
+            _phantom: core::marker::PhantomData,
             last_clk_state: clk_state,
             last_sw_state: sw_state,
             notification,

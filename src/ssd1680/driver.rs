@@ -62,6 +62,9 @@ pub use display_interface::DisplayError;
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{InputPin, OutputPin};
+use alloc::vec;
+use alloc::format;
+use alloc::vec::Vec;
 use embedded_hal::spi::SpiDevice;
 
 use crate::ssd1680::interface::DisplayInterface;

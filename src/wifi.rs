@@ -4,6 +4,11 @@ use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::{EspNvsPartition, NvsDefault};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{info, warn};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::format;
+use core::convert::From;
 
 // Re-export AuthMethod for public use
 pub use esp_idf_svc::wifi::AuthMethod;
@@ -47,7 +52,7 @@ impl<'a> WifiManager<'a> {
 
     pub fn connect(
         &mut self,
-        modem: impl std::convert::Into<esp_idf_svc::hal::modem::Modem> + 'a,
+        modem: impl core::convert::Into<esp_idf_svc::hal::modem::Modem> + 'a,
     ) -> Result<()> {
         let sys_loop = EspSystemEventLoop::take()?;
         let nvs = EspNvsPartition::<NvsDefault>::take()?;

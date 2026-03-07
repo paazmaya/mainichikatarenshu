@@ -8,6 +8,7 @@ use crate::ssd1680::text::{TextRenderer, TextConfig, TextAlignment};
 use crate::ssd1680::display_utils::{DisplayManager, presets};
 use embedded_graphics::pixelcolor::BinaryColor;
 use display_interface::DisplayError;
+use alloc::format;
 
 /// Kata display manager for application-specific display operations
 pub struct KataDisplayManager;

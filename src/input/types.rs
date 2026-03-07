@@ -1,5 +1,7 @@
 //! Types for input handling
 
+use core::fmt;
+
 /// Button identifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -60,8 +62,8 @@ impl From<DialEvent> for InputEvent {
     }
 }
 
-impl std::fmt::Display for Button {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Button {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Button::Exit => write!(f, "Exit"),
             Button::Menu => write!(f, "Menu"),
@@ -73,8 +75,8 @@ impl std::fmt::Display for Button {
     }
 }
 
-impl std::fmt::Display for ButtonEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ButtonEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ButtonEvent::Pressed(btn) => write!(f, "{} pressed", btn),
             ButtonEvent::Released(btn) => write!(f, "{} released", btn),
@@ -83,8 +85,8 @@ impl std::fmt::Display for ButtonEvent {
     }
 }
 
-impl std::fmt::Display for DialEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for DialEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DialEvent::Rotated(dir) => match dir {
                 DialDirection::Clockwise => write!(f, "Dial rotated clockwise"),
@@ -96,8 +98,8 @@ impl std::fmt::Display for DialEvent {
     }
 }
 
-impl std::fmt::Display for InputEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for InputEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             InputEvent::Button(evt) => write!(f, "{}", evt),
             InputEvent::Dial(evt) => write!(f, "{}", evt),

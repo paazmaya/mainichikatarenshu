@@ -245,9 +245,8 @@ const fn buffer_len(width: usize, height: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{find_position, outside_display, Display, Display2in13, DisplayRotation};
-    use crate::color::Black;
-    use crate::color::Color;
-    use embedded_graphics::{prelude::*, primitives::Line, primitives::PrimitiveStyle};
+    use crate::ssd1680::color::Color;
+    use embedded_graphics::{prelude::*, primitives::Line, primitives::PrimitiveStyle, pixelcolor::BinaryColor};
 
     #[test]
     fn buffer_clear() {
@@ -266,7 +265,7 @@ mod tests {
 
     #[test]
     fn rotation_overflow() {
-        use crate::{HEIGHT, WIDTH};
+        use crate::ssd1680::{HEIGHT, WIDTH};
         let width = WIDTH as u32;
         let height = HEIGHT as u32;
         test_rotation_overflow(width, height, DisplayRotation::Rotate0);
@@ -295,7 +294,7 @@ mod tests {
         let mut display = Display2in13::bw();
 
         let _ = Line::new(Point::new(0, 0), Point::new(7, 0))
-            .into_styled(PrimitiveStyle::with_stroke(Black, 1))
+            .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
             .draw(&mut display);
 
         let buffer = display.buffer();

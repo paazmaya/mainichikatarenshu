@@ -140,7 +140,11 @@ fn convert_image_to_binary(
 }
 
 fn main() {
-    embuild::espidf::sysenv::output();
+    // Only run ESPIDF-specific build steps when not in test mode and embuild is available
+    #[cfg(feature = "embuild")]
+    {
+        embuild::espidf::sysenv::output();
+    }
 
     // Get output directory
     let out_dir = env::var("OUT_DIR").unwrap();
