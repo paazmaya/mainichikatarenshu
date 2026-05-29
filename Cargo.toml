@@ -47,7 +47,7 @@ display-interface = "0.5.0"
 epd-waveshare = "0.6.0"
 
 [build-dependencies]
-embuild = { version = "0.31", optional = true, features = ["espidf"] }
+embuild = { version = "0.33", optional = true, features = ["espidf"] }
 # Image processing at build time
 image = { version = "0.25", default-features = false, features = ["png"] }
 bincode = "3.0"
