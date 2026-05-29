@@ -27,7 +27,7 @@ log = "0.4.29"
 anyhow = "1.0.100"
 futures = "0.3.31"
 embedded-svc = { version = "0.26.4", optional = true }
-heapless = { version = "0.8.0" }
+heapless = { version = "0.9.0" }
 
 # https://github.com/esp-rs/esp-idf-svc
 esp-idf-svc = { version = "0.51", features = ["critical-section", "std"], optional = true }
