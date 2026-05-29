@@ -567,27 +567,6 @@ dependencies = [
 
 [[package]]
 name = "embuild"
-version = "0.31.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4caa4f198bb9152a55c0103efb83fa4edfcbb8625f4c9e94ae8ec8e23827c563"
-dependencies = [
- "anyhow",
- "bitflags 1.3.2",
- "filetime",
- "home",
- "log",
- "remove_dir_all",
- "serde",
- "serde_json",
- "shlex",
- "strum 0.24.1",
- "tempfile",
- "thiserror 1.0.69",
- "which",
-]
-
-[[package]]
-name = "embuild"
 version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e188ad2bbe82afa841ea4a29880651e53ab86815db036b2cb9f8de3ac32dad75"
@@ -685,7 +664,7 @@ dependencies = [
  "embedded-hal-nb",
  "embedded-io",
  "embedded-io-async",
- "embuild 0.33.1",
+ "embuild",
  "enumset",
  "esp-idf-sys",
  "heapless 0.8.0",
@@ -703,7 +682,7 @@ dependencies = [
  "embassy-futures",
  "embedded-hal-async",
  "embedded-svc 0.28.1",
- "embuild 0.33.1",
+ "embuild",
  "enumset",
  "esp-idf-hal",
  "futures-io",
@@ -724,7 +703,7 @@ dependencies = [
  "cargo_metadata",
  "cmake",
  "const_format",
- "embuild 0.33.1",
+ "embuild",
  "envy",
  "libc",
  "regex",
@@ -1157,7 +1136,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal 1.0.0",
  "embedded-svc 0.26.4",
- "embuild 0.31.4",
+ "embuild",
  "epd-waveshare",
  "esp-idf-svc",
  "futures",
