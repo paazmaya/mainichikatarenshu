@@ -5,6 +5,11 @@ version = "0.1.0"
 authors = ["Juga Paazmaya <paazmaya@yahoo.com>"]
 edition = "2021"
 license = "MIT"
+homepage = "https://github.com/paazmaya/mainichikatarenshu"
+repository = "https://github.com/paazmaya/mainichikatarenshu"
+keywords = ["esp32", "e-ink", "embedded", "kata", "epaper"]
+categories = ["embedded"]
+publish = false
 resolver = "2"
 rust-version = "1.77"
 
