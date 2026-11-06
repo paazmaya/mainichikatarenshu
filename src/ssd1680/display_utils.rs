@@ -8,7 +8,7 @@ use crate::ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
 use crate::ssd1680::{HEIGHT, WIDTH};
 use display_interface::DisplayError;
 use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::{DrawTarget, Primitive};
+use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Primitive};
 use embedded_graphics::Drawable;
 
 /// Display manager that provides high-level display operations
@@ -147,8 +147,7 @@ impl DisplayManager {
             config.unwrap_or_else(|| TextConfig::default().alignment(TextAlignment::Center));
 
         // Calculate approximate center position
-        let display_width = WIDTH;
-        let display_height = HEIGHT;
+        let display_height = display.size().height;
 
         // Estimate text height for centering
         let lines = message.lines().count();
@@ -156,10 +155,9 @@ impl DisplayManager {
         let line_height = font_height * text_config.line_spacing;
         let total_text_height = lines as u32 * line_height;
 
-        let center_x = display_width as u32 / 2;
-        let center_y = (display_height.saturating_sub(total_text_height as u16)) as u32 / 2;
+        let center_y = display_height.saturating_sub(total_text_height) / 2;
 
-        TextRenderer::write_text(display, message, center_x, center_y, 0, text_config)?;
+        TextRenderer::write_text(display, message, 0, center_y, 0, text_config)?;
 
         Ok(())
     }
@@ -321,6 +319,22 @@ mod tests {
         let display = DisplayManager::create_display();
         // Test that display is created successfully
         // (actual testing would require checking the display buffer)
+    }
+
+    #[test]
+    fn centered_message_draws_within_display() {
+        let mut display = Display2in13::new();
+        DisplayManager::show_centered_message(&mut display, "Setup required", None).unwrap();
+        let changed_columns: alloc::vec::Vec<_> = display
+            .buffer()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, byte)| (*byte != 0xff).then_some(index % (WIDTH as usize / 8)))
+            .collect();
+        assert!(!changed_columns.is_empty());
+        assert!(changed_columns
+            .iter()
+            .all(|column| (3..=12).contains(column)));
     }
 
     #[test]

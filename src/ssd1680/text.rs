@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn test_text_config_default() {
         let config = TextConfig::default();
-        assert_eq!(config.font, &FONT_5X8);
+        assert_eq!(config.font.character_size, FONT_5X8.character_size);
         assert_eq!(config.color, BinaryColor::On);
         assert_eq!(config.alignment, TextAlignment::Left);
         assert_eq!(config.line_spacing, 1);

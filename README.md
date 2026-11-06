@@ -8,9 +8,120 @@ E-ink display showing a kata for each day, along with current electricity price,
 
 ## Project Status
 
-**Current Phase:** ✅ Display Driver Complete | 🚧 Core Features In Development
+**Current phase: migration in progress; the application is not yet functional.**
 
-### ✅ Implemented Features
+The firmware builds for `xtensa-esp32s3-none-elf` using `esp-hal` rather
+than ESP-IDF. The experimental entry point connects the display, GPIO5 confirm
+button, manual clock, Helsinki schedule and flash-backed training queue.
+An optional Wi-Fi station implementation uses Espressif's radio and Embassy
+network stack. Host tests cover the state machine, credential validation and
+selected persistence failures, but none of these paths has been verified on a
+CrowPanel. Sleep, other buttons, Nord Pool prices and Supabase synchronization
+are not implemented.
+
+The existing `kata.yaml` maps categories to a kata name. A category may also
+contain a list of names:
+
+```yaml
+karate: "First kata"
+kobujutsu:
+  - "Second kata"
+  - "Third kata"
+```
+
+All categories contribute to one selection pool; category labels are not
+stored in training records. Each category and name must be nonempty, and names
+must be at most 64 UTF-8 bytes. The build rejects invalid files and duplicate
+categories. When the file is absent, a warning is emitted and no kata names
+are embedded. Rebuild after changing the file. Set `KATA_CONFIG` to a
+different YAML file path when building with an alternate list. If explicitly
+set, that file must exist.
+
+The optional `wifi` feature uses `esp-radio`, `esp-rtos` and `embassy-net`,
+including Espressif's precompiled radio libraries; the firmware is **not**
+pure Rust throughout. The older ESP-IDF `wifi.rs` is not used. Nord Pool API
+access and the Supabase schema and credentials still need to be provisioned
+before live integrations can be implemented and validated.
+The bare-metal HAL still calls functions in the chip's existing ROM, and
+`espflash` uses a bootloader; this is not a claim that the entire device
+boot chain consists of Rust source.
+
+Build the experimental firmware after installing the ESP Xtensa toolchain and
+adding its GCC tools to `PATH`:
+
+```sh
+cargo +esp build --release --features firmware
+# Include the optional station-mode Wi-Fi stack:
+cargo +esp build --release --features wifi
+```
+
+### Experimental Wi-Fi setup
+
+The `wifi` build accepts credentials over UART0 at 115200 baud. Send each
+command as a separate newline-terminated line:
+
+```text
+SSID <network name>
+PASSWORD <WPA2 passphrase>
+CONNECT
+```
+
+SSID and passphrase are printable ASCII, with lengths of 1–32 and 8–63 bytes
+respectively. This initial implementation supports WPA2-Personal only; no
+open-network or WPA3 provisioning is provided. Credentials are held in RAM,
+not intentionally written to flash, and must be entered again after a restart.
+The serial connection is plaintext, the terminal may echo or retain commands,
+and RAM is not securely erased; use a trusted serial connection. Restart to
+change credentials or retry a radio initialization failure.
+
+The firmware reports association, DHCP address, disconnection and connection
+errors on serial and retries after disconnection. It remains usable offline
+while connecting. There is no time synchronization, HTTPS client, Nord Pool
+retrieval or Supabase upload yet. The driver and connection flow have only
+been built, not tested with an ESP32-S3 or access point.
+
+### Experimental offline operation
+
+Before flashing, inspect and back up the device's existing flash. The proposed
+`partitions.csv` reserves 128 KiB at `0x420000` for training; installing a
+different partition table can make existing data inaccessible. The firmware
+refuses to use storage unless the installed table has a valid, non-overlapping
+`training` partition with the expected type and alignment. The default flash
+runner does not install this table automatically. Plan any migration separately;
+do not assume an existing device has the proposed layout.
+
+On UART0 through the board's serial interface (115200 baud), send newline
+terminated commands:
+
+- `TIME <UTC unix seconds>` sets the clock, for example `TIME 1767225600`.
+  The clock must be set after power loss or a normal reset; no network time
+  source is available. If the time is moved backwards, the training workflow
+  pauses until the clock reaches the last observed time or is corrected. After
+  restart, the comparison uses the time saved at the last state change.
+- `LIST` prints pending completed-day records in order.
+- `ACK <YYYY-MM-DD>` permanently removes the oldest pending record. Only
+  acknowledge it after independently saving or synchronizing it; there is no
+  automatic upload. An out-of-order date is rejected.
+
+The queue holds 32 completed days. When full, the active record remains
+preserved and the workflow pauses; export and acknowledge the oldest record
+to resume. The display is refreshed on state changes, not continuously, so
+the time shown is the time of the last refresh. The device currently polls and
+does not enter low-power sleep.
+
+The storage implementation uses `sequential-storage` snapshots. While a
+simulated interrupted write and failed commit are tested, the library can skip
+corrupt items and perform automatic repair. Arbitrary corruption, all power-loss
+points and real flash behavior have not been validated; silent rollback or data
+loss cannot yet be ruled out. A flash write error stops the firmware because
+the outcome may be ambiguous. Do not rely on this experimental queue as the
+only copy of important records.
+
+The historical ESP-IDF instructions and roadmap below describe earlier work,
+not the current firmware build or verified functionality. Do not flash an
+existing device without first checking its flash layout and backing up its data.
+
+### Previously implemented components
 
 - **Custom SSD1680 E-Paper Driver** - Fully functional Rust driver for the CrowPanel ESP32 2.9" display
 - **Display Rendering** - Text and image display using `embedded-graphics`
@@ -24,7 +135,7 @@ Each day at 07:00 EET the e-ink screen will wake up and update the kata name fro
 
 The display will shutdown at 23:00 EET, which will record the kata either incomplete if the button has not been pressed before that.
 
-The knowledge of the kata being confirmed or not, will be send to Google Drive, to store the information in a spreadsheet. The columns date, kata name, confirmed (boolean), time of confirmation.
+The former Google Drive plan has been replaced by the intended Supabase sync.
 
 ```sh
 cargo install espup@0.11.0 # Get ESP tooling handler, version that still works in Windows: could not be opened: LoadLibraryExW failed

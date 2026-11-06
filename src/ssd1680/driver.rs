@@ -181,7 +181,7 @@ where
         self.interface.cmd(Cmd::DISPLAY_UPDATE_CTRL2)?;
         self.interface.data(&[ctrl2_value])?;
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
         Ok(())
     }
 
@@ -195,7 +195,7 @@ where
         self.interface.data(&[ctrl2_value])?;
         self.interface.delay.delay_ms(delay_ms);
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
         Ok(())
     }
 
@@ -441,7 +441,7 @@ where
         log::info!("Waking up the device");
         self.interface
             .cmd_with_data(Cmd::DEEP_SLEEP_MODE, &[Flag::DEEP_SLEEP_NORMAL_MODE])?;
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
         Ok(())
     }
 
@@ -453,7 +453,7 @@ where
 
         // Before starting a new update, make sure the display is idle
         // Some displays need this check to avoid conflicts
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         // Different display update sequence based on SSD1680 datasheet
 
@@ -482,7 +482,7 @@ where
         self.interface.delay.delay_ms(300); // Longer delay to ensure update starts properly
 
         // 4. Wait for display to be ready
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         // 5. Send NOP to terminate the update sequence
         self.interface.cmd(Cmd::NOP)?;
@@ -698,7 +698,7 @@ where
         log::info!("Drawing simple split-screen test pattern (half black, half white)");
 
         // Ensure display is ready before starting
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         // Setup the RAM window to cover the whole display
         self.use_full_frame()?;
@@ -905,7 +905,7 @@ where
         self.interface.cmd(Cmd::SET_RAMY_START_END)?;
         // Remember Y address is little-endian (LSB first)
         self.interface.data(&[
-            (0 & 0xFF) as u8,            // Y start LSB
+            0,                           // Y start LSB
             (0 >> 8) as u8,              // Y start MSB
             ((HEIGHT - 1) & 0xFF) as u8, // Y end LSB
             ((HEIGHT - 1) >> 8) as u8,   // Y end MSB
@@ -1069,7 +1069,7 @@ where
 
         // Wait for everything to stabilize
         log::info!("Waiting for stabilization");
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         log::info!("Revised 2.9-inch init sequence completed successfully");
         Ok(())
@@ -1123,7 +1123,7 @@ where
     /// Wait for BUSY pin to go LOW - matches Arduino EPD_READBUSY
     ///
     /// **UNUSED** - Not called from main.rs execution path
-    pub fn wait_busy(&mut self) {
+    pub fn wait_busy(&mut self) -> Result<(), DisplayError> {
         self.interface.wait_busy_low()
     }
 
@@ -1149,7 +1149,7 @@ where
         self.interface.data_x_times(color, total_bytes)?;
 
         // Wait for busy - EXACTLY as in C++
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         log::info!("C++ epd_all_fill complete");
         Ok(())
@@ -1178,7 +1178,7 @@ where
         self.interface.data_x_times(0xFF, total_bytes)?;
 
         // Wait for busy
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         log::info!("C++ epd_clear_r26h complete");
         Ok(())
@@ -1300,7 +1300,7 @@ where
 
         // Software reset
         self.interface.cmd(0x12)?;
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         // Driver output control
         self.cmd_data(0x01, &[0x27, 0x01, 0x00])?;
@@ -1327,7 +1327,7 @@ where
         self.cmd_data(0x4F, &[0x00, 0x00])?;
 
         // Final busy wait
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         log::info!("C++ EPD_Init() complete");
         Ok(())
@@ -1357,7 +1357,7 @@ where
 
         // Step 5: Wait until operation completes
         log::info!("Waiting for busy signal to clear...");
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         // Note: If the above doesn't work, we'll try the Arduino-specific approach
         log::info!("Arduino-compatible approach completed, display should update now");
@@ -1454,7 +1454,7 @@ where
         self.interface.delay.delay_ms(500); // Pre-wait delay
 
         // Check busy status
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         log::info!("Direct clear operation completed, display should now be white");
         Ok(())
@@ -1524,11 +1524,11 @@ where
     }
 
     /// Wait for busy pin to go LOW - using Arduino approach with safety timeout
-    fn arduino_wait_until_idle(&mut self) {
+    fn arduino_wait_until_idle(&mut self) -> Result<(), DisplayError> {
         log::info!("Waiting for BUSY pin to go LOW (Arduino style)");
 
         // Use the interface's wait_busy_low which now has proper timeout handling
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()
     }
 
     /// Update the display with full refresh - EXACTLY matching Arduino's EPD_Update sequence
@@ -1598,7 +1598,7 @@ where
         }
 
         self.interface.cmd(Cmd::MASTER_ACTIVATE)?;
-        self.interface.wait_busy_low();
+        self.interface.wait_busy_low()?;
 
         Ok(())
     }

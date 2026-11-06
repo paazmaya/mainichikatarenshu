@@ -2,3 +2,4 @@
 nvs,      data, nvs,     0x9000,  0x8000,
 phy_init, data, phy,     , 0x8000,
 factory,  app,  factory, , 4M,
+training, data, undefined, 0x420000, 128K,

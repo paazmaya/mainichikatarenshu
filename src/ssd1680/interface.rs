@@ -41,6 +41,10 @@ use embedded_hal::{
     spi::SpiDevice,
 };
 
+#[cfg(test)]
+#[path = "interface_tests.rs"]
+mod tests;
+
 /// SPI Display Interface for SSD1680 E-Paper Controller
 ///
 /// Manages low-level communication with the SSD1680 via SPI, including:
@@ -128,7 +132,7 @@ where
 
         // Software reset - start with a clean state
         self.cmd(Cmd::SW_RESET)?;
-        self.wait_busy_low();
+        self.wait_busy_low()?;
         self.delay.delay_ms(10);
 
         // Step 1: Driver Output Control
@@ -199,7 +203,7 @@ where
         self.cmd_with_data_and_delay(Cmd::WRITE_VCOM_REGISTER, &[Flag::VCOM_DEFAULT], 10)?; // VCOM = -1.4V
 
         // Final wait for any pending operations
-        self.wait_busy_low();
+        self.wait_busy_low()?;
         self.delay.delay_ms(10);
 
         Ok(())
@@ -274,37 +278,21 @@ where
     }
 
     /// Wait for busy pin to go LOW - Arduino EPD_READBUSY implementation with safety timeout
-    pub fn wait_busy_low(&mut self) {
-        // Similar to Arduino but with a safety timeout to prevent infinite loops
-        let max_attempts = 5_000_000; // Very high limit but prevents infinite hang
-        let mut counter = 0u32;
-
-        while counter < max_attempts {
-            // Check if busy pin is low (not busy)
+    pub fn wait_busy_low(&mut self) -> Result<(), DisplayError> {
+        const MAX_ATTEMPTS: u32 = 3_000;
+        for _ in 0..MAX_ATTEMPTS {
             match self.busy.is_high() {
-                Ok(false) => {
-                    // Busy pin is LOW - we're done waiting
-                    return;
-                }
-                Ok(true) => {
-                    // Busy pin is still HIGH - continue waiting
-                    counter += 1;
-                }
+                Ok(false) => return Ok(()),
+                Ok(true) => {}
                 Err(_) => {
-                    // Error reading pin - bail out to avoid infinite loop
-                    log::error!("Error reading BUSY pin state - assuming not busy to continue");
-                    return;
+                    log::error!("Failed to read display BUSY pin");
+                    return Err(DisplayError::BusWriteError);
                 }
             }
             self.delay.delay_ms(10);
         }
-
-        // If we got here, we timed out
-        log::error!(
-            "EPD_READBUSY: TIMEOUT waiting for BUSY pin to go LOW after {} attempts",
-            max_attempts
-        );
-        // Don't hang the program - just continue and hope for the best
+        log::error!("Timed out waiting for display BUSY pin");
+        Err(DisplayError::BusWriteError)
     }
 
     /// Resets the device with the exact Arduino reset sequence - EXACTLY matching EPD_HW_RESET

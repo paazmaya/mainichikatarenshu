@@ -82,17 +82,17 @@ pub trait Display: DrawTarget {
             // White/Red
             BinaryColor::On => {
                 if is_inverted {
-                    buffer[index] &= !bit;
-                } else {
                     buffer[index] |= bit;
+                } else {
+                    buffer[index] &= !bit;
                 }
             }
             //Black
             BinaryColor::Off => {
                 if is_inverted {
-                    buffer[index] |= bit;
-                } else {
                     buffer[index] &= !bit;
+                } else {
+                    buffer[index] |= bit;
                 }
             }
         }

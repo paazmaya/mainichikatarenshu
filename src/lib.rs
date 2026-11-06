@@ -11,17 +11,20 @@ extern crate alloc;
 extern crate alloc;
 
 // Re-export the main modules for testing
+pub mod buttons;
 pub mod kata_display;
+pub mod network_config;
+pub mod partitions;
+pub mod schedule;
 pub mod ssd1680;
+pub mod storage;
+pub mod training;
+pub mod wpa2;
 
-// Only include ESP32-specific modules when not in test mode
-#[cfg(not(feature = "test-utils"))]
-pub mod input;
-#[cfg(not(feature = "test-utils"))]
-pub mod wifi;
-
-#[cfg(not(feature = "test-utils"))]
-mod app; // Private main module (renamed from main.rs)
+/// Kata names validated and embedded from the optional `kata.yaml` at build time.
+pub mod kata {
+    include!(concat!(env!("OUT_DIR"), "/kata.rs"));
+}
 
 // Re-export main types for easier testing
 pub use kata_display::TrainingStats;

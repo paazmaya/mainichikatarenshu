@@ -2,6 +2,32 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+#[path = "build_support/kata_config.rs"]
+mod kata_config;
+
+fn generate_kata_list(out_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=KATA_CONFIG");
+    let path = env::var("KATA_CONFIG").unwrap_or_else(|_| "kata.yaml".to_owned());
+    println!("cargo:rerun-if-changed={path}");
+    let names = match std::fs::read_to_string(&path) {
+        Ok(contents) => kata_config::parse(&contents)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if env::var_os("KATA_CONFIG").is_some() {
+                return Err(format!("configured kata file '{path}' does not exist").into());
+            }
+            println!("cargo:warning=kata.yaml is absent; the firmware requires configuration");
+            Vec::new()
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let mut output = String::from("pub const KATA: &[&str] = &[\n");
+    for name in names {
+        output.push_str(&format!("    {name:?},\n"));
+    }
+    output.push_str("];\n");
+    std::fs::write(Path::new(out_dir).join("kata.rs"), output)?;
+    Ok(())
+}
 
 /// Convert PNG image to 2-color format at build time
 fn convert_image_to_binary(
@@ -140,14 +166,9 @@ fn convert_image_to_binary(
 }
 
 fn main() {
-    // Only run ESPIDF-specific build steps when not in test mode and embuild is available
-    #[cfg(feature = "embuild")]
-    {
-        embuild::espidf::sysenv::output();
-    }
-
     // Get output directory
     let out_dir = env::var("OUT_DIR").unwrap();
+    generate_kata_list(&out_dir).expect("invalid kata configuration");
 
     // Convert logo.png to binary format at build time
     // IMPORTANT: Display physical RAM is 128 pixels wide × 296 pixels tall
@@ -166,4 +187,5 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=logo.png");
+    println!("cargo:rerun-if-changed=build_support/kata_config.rs");
 }

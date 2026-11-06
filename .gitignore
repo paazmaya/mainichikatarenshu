@@ -12,3 +12,4 @@ build
 *.pdb
 
 partition-table.bin
+.DS_Store
