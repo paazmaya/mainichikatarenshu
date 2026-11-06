@@ -3,12 +3,12 @@
 //! This module provides reusable utilities for common display operations,
 //! reducing code duplication and improving maintainability.
 
-use embedded_graphics::pixelcolor::BinaryColor;
-use crate::ssd1680::{WIDTH, HEIGHT};
 use crate::ssd1680::graphics::{Display, Display2in13, DisplayRotation};
-use crate::ssd1680::text::{TextRenderer, TextConfig, TextAlignment};
+use crate::ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
+use crate::ssd1680::{HEIGHT, WIDTH};
 use display_interface::DisplayError;
-use embedded_graphics::prelude::{Primitive, DrawTarget};
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::{DrawTarget, Primitive};
 use embedded_graphics::Drawable;
 
 /// Display manager that provides high-level display operations
@@ -25,10 +25,10 @@ impl DisplayManager {
     /// A new display buffer ready for drawing
     pub fn create_display() -> Display2in13 {
         let mut display = Display2in13::new();
-        
+
         // Set default rotation to match physical display orientation
         display.set_rotation(DisplayRotation::Rotate270);
-        
+
         display
     }
 
@@ -70,10 +70,8 @@ impl DisplayManager {
         message: &str,
         config: Option<TextConfig>,
     ) -> Result<(), DisplayError> {
-        let text_config = config.unwrap_or_else(|| {
-            TextConfig::default()
-                .alignment(TextAlignment::Right)
-        });
+        let text_config =
+            config.unwrap_or_else(|| TextConfig::default().alignment(TextAlignment::Right));
 
         // Position in top-right corner with some padding
         let x = WIDTH - 10; // Right padding
@@ -104,12 +102,12 @@ impl DisplayManager {
         config: Option<TextConfig>,
     ) -> Result<(), DisplayError> {
         let base_config = config.unwrap_or_default();
-        
+
         // Draw title at the top
         let title_config = TextConfig::new(base_config.font)
             .color(base_config.color)
             .alignment(TextAlignment::Left);
-            
+
         TextRenderer::write_line(display, title, 10, 10, title_config)?;
 
         // Draw content below the title with spacing
@@ -145,21 +143,19 @@ impl DisplayManager {
         message: &str,
         config: Option<TextConfig>,
     ) -> Result<(), DisplayError> {
-        let text_config = config.unwrap_or_else(|| {
-            TextConfig::default()
-                .alignment(TextAlignment::Center)
-        });
+        let text_config =
+            config.unwrap_or_else(|| TextConfig::default().alignment(TextAlignment::Center));
 
         // Calculate approximate center position
         let display_width = WIDTH;
         let display_height = HEIGHT;
-        
+
         // Estimate text height for centering
         let lines = message.lines().count();
         let font_height = text_config.font.character_size.height;
         let line_height = font_height * text_config.line_spacing;
         let total_text_height = lines as u32 * line_height;
-        
+
         let center_x = display_width as u32 / 2;
         let center_y = (display_height.saturating_sub(total_text_height as u16)) as u32 / 2;
 
@@ -189,25 +185,33 @@ impl DisplayManager {
         time_str: &str,
         status_msg: Option<&str>,
     ) -> Result<(), DisplayError> {
-        use embedded_graphics::mono_font::iso_8859_15::{FONT_5X8, FONT_10X20};
+        use embedded_graphics::mono_font::iso_8859_15::{FONT_10X20, FONT_5X8};
 
         // Draw date in large font
-        let date_config = TextConfig::new(&FONT_10X20)
-            .color(BinaryColor::On);
-            
-        TextRenderer::write_line(display, "Current Date:", 10, 10, 
-            TextConfig::new(&FONT_5X8).color(BinaryColor::On))?;
-            
+        let date_config = TextConfig::new(&FONT_10X20).color(BinaryColor::On);
+
+        TextRenderer::write_line(
+            display,
+            "Current Date:",
+            10,
+            10,
+            TextConfig::new(&FONT_5X8).color(BinaryColor::On),
+        )?;
+
         TextRenderer::write_line(display, date_str, 10, 30, date_config)?;
 
         // Draw time in medium font if provided
         if !time_str.is_empty() {
-            let time_config = TextConfig::new(&FONT_10X20)
-                .color(BinaryColor::On);
-                
-            TextRenderer::write_line(display, "Current Time:", 10, 60,
-                TextConfig::new(&FONT_5X8).color(BinaryColor::On))?;
-                
+            let time_config = TextConfig::new(&FONT_10X20).color(BinaryColor::On);
+
+            TextRenderer::write_line(
+                display,
+                "Current Time:",
+                10,
+                60,
+                TextConfig::new(&FONT_5X8).color(BinaryColor::On),
+            )?;
+
             TextRenderer::write_line(display, time_str, 10, 80, time_config)?;
         }
 
@@ -268,7 +272,7 @@ impl DisplayManager {
 /// Predefined text configurations for common use cases
 pub mod presets {
     use super::*;
-    use embedded_graphics::mono_font::iso_8859_15::{FONT_5X8, FONT_10X20};
+    use embedded_graphics::mono_font::iso_8859_15::{FONT_10X20, FONT_5X8};
 
     /// Get a text configuration for titles (large font)
     pub fn title() -> TextConfig {

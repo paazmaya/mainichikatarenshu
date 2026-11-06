@@ -78,11 +78,11 @@ pub mod driver;
 
 /// Command definitions for SSD1680
 pub mod cmd;
+pub mod display_utils;
 pub mod flag;
 pub mod graphics;
 pub mod pins;
 pub mod text;
-pub mod display_utils;
 
 /// Maximum display height this driver supports
 #[allow(dead_code)]

@@ -1,15 +1,15 @@
 extern crate alloc;
 
-use anyhow::Ok;
-use alloc::string::{String, ToString};
 use alloc::format;
+use alloc::string::{String, ToString};
+use anyhow::Ok;
 
 // Import ESP32 HAL types
 use esp_idf_svc::hal::delay::Delay;
-use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::gpio;
-use esp_idf_svc::hal::spi::{SpiDeviceDriver, SpiDriverConfig, SpiConfig, Dma};
+use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::spi::{Dma, SpiConfig, SpiDeviceDriver, SpiDriverConfig};
 
 #[cfg(test)]
 mod display_tests;

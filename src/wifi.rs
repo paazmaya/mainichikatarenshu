@@ -1,14 +1,14 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use anyhow::{Context, Result};
-use esp_idf_svc::wifi::{ClientConfiguration, Configuration};
+use core::convert::From;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::{EspNvsPartition, NvsDefault};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
+use esp_idf_svc::wifi::{ClientConfiguration, Configuration};
 use log::{info, warn};
-use alloc::boxed::Box;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-use alloc::format;
-use core::convert::From;
 
 // Re-export AuthMethod for public use
 pub use esp_idf_svc::wifi::AuthMethod;
@@ -101,7 +101,10 @@ impl<'a> WifiManager<'a> {
 
         // Scan for available networks
         let ap_infos = wifi.scan()?;
-        let available_networks: Vec<String> = ap_infos.iter().map(|ap| ap.ssid.as_str().to_string()).collect();
+        let available_networks: Vec<String> = ap_infos
+            .iter()
+            .map(|ap| ap.ssid.as_str().to_string())
+            .collect();
 
         Ok(available_networks)
     }

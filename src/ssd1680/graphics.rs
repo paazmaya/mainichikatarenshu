@@ -3,8 +3,8 @@
 use crate::ssd1680::color::Color;
 use crate::ssd1680::{HEIGHT, WIDTH};
 use display_interface::DisplayError;
-use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use embedded_graphics::prelude::Primitive;
+use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 
 /// Displayrotation
 #[derive(Clone, Copy, Default)]
@@ -246,7 +246,9 @@ const fn buffer_len(width: usize, height: usize) -> usize {
 mod tests {
     use super::{find_position, outside_display, Display, Display2in13, DisplayRotation};
     use crate::ssd1680::color::Color;
-    use embedded_graphics::{prelude::*, primitives::Line, primitives::PrimitiveStyle, pixelcolor::BinaryColor};
+    use embedded_graphics::{
+        pixelcolor::BinaryColor, prelude::*, primitives::Line, primitives::PrimitiveStyle,
+    };
 
     #[test]
     fn buffer_clear() {

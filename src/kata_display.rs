@@ -3,12 +3,12 @@
 //! This module contains display functions specific to the kata reminder application,
 //! separated from the generic display utilities to improve testability and maintainability.
 
+use crate::ssd1680::display_utils::{presets, DisplayManager};
 use crate::ssd1680::graphics::Display2in13;
-use crate::ssd1680::text::{TextRenderer, TextConfig, TextAlignment};
-use crate::ssd1680::display_utils::{DisplayManager, presets};
-use embedded_graphics::pixelcolor::BinaryColor;
-use display_interface::DisplayError;
+use crate::ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
 use alloc::format;
+use display_interface::DisplayError;
+use embedded_graphics::pixelcolor::BinaryColor;
 
 /// Kata display manager for application-specific display operations
 pub struct KataDisplayManager;
@@ -51,23 +51,17 @@ impl KataDisplayManager {
         // Show kata reminder with emphasis
         let kata_config = presets::large_centered();
         let kata_title = presets::title();
-        
+
         // Add "Today's Kata:" label
-        TextRenderer::write_line(
-            display,
-            "Today's Kata:",
-            10,
-            120,
-            kata_title,
-        )?;
+        TextRenderer::write_line(display, "Today's Kata:", 10, 120, kata_title)?;
 
         // Display the kata name centered and prominent
         TextRenderer::write_text(
             display,
             kata_name,
-            0, // Center horizontally
+            0,   // Center horizontally
             150, // Position below the title
-            0, // Auto-detect width
+            0,   // Auto-detect width
             kata_config,
         )?;
 
@@ -97,7 +91,7 @@ impl KataDisplayManager {
 
         // Show completion message
         let completion_config = presets::large_centered();
-        
+
         TextRenderer::write_text(
             display,
             &format!("✓ Completed\n{}\n\nTime: {}", kata_name, completion_time),
@@ -153,31 +147,15 @@ impl KataDisplayManager {
         DisplayManager::clear_and_prepare(display)?;
 
         // Title
-        TextRenderer::write_line(
-            display,
-            "Training Progress",
-            10,
-            10,
-            presets::title(),
-        )?;
+        TextRenderer::write_line(display, "Training Progress", 10, 10, presets::title())?;
 
         // Statistics
         let stats_text = format!(
             "Total Sessions: {}\nThis Week: {}\nCurrent Streak: {} days\nBest Streak: {} days",
-            stats.total_sessions,
-            stats.weekly_sessions,
-            stats.current_streak,
-            stats.best_streak
+            stats.total_sessions, stats.weekly_sessions, stats.current_streak, stats.best_streak
         );
 
-        TextRenderer::write_text(
-            display,
-            &stats_text,
-            10,
-            50,
-            0,
-            presets::body(),
-        )?;
+        TextRenderer::write_text(display, &stats_text, 10, 50, 0, presets::body())?;
 
         Ok(())
     }
@@ -307,7 +285,7 @@ impl TrainingStats {
         self.total_sessions += 1;
         self.weekly_sessions += 1;
         self.current_streak += 1;
-        
+
         if self.current_streak > self.best_streak {
             self.best_streak = self.current_streak;
         }
@@ -342,7 +320,7 @@ mod tests {
     fn test_training_stats_session_completed() {
         let mut stats = TrainingStats::new(10, 3, 5, 7);
         stats.session_completed();
-        
+
         assert_eq!(stats.total_sessions, 11);
         assert_eq!(stats.weekly_sessions, 4);
         assert_eq!(stats.current_streak, 6);
@@ -355,7 +333,7 @@ mod tests {
         stats.session_completed();
         stats.session_completed();
         stats.session_completed();
-        
+
         assert_eq!(stats.best_streak, 8); // Updated to new best
     }
 
@@ -363,7 +341,7 @@ mod tests {
     fn test_training_stats_reset_weekly() {
         let mut stats = TrainingStats::new(10, 3, 5, 7);
         stats.reset_weekly();
-        
+
         assert_eq!(stats.weekly_sessions, 0);
         assert_eq!(stats.total_sessions, 10); // Unchanged
         assert_eq!(stats.current_streak, 5); // Unchanged
@@ -373,7 +351,7 @@ mod tests {
     fn test_training_stats_break_streak() {
         let mut stats = TrainingStats::new(10, 3, 5, 7);
         stats.break_streak();
-        
+
         assert_eq!(stats.current_streak, 0);
         assert_eq!(stats.best_streak, 7); // Unchanged
     }
