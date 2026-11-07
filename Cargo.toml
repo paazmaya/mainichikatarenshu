@@ -36,7 +36,7 @@ chrono-tz = { version = "0.10", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive"] }
 sequential-storage = { version = "8", features = ["postcard"] }
 embedded-storage-async = "0.4"
-md-5 = { version = "0.10", default-features = false }
+md-5 = { version = "0.11", default-features = false }
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 sha1 = { version = "0.11", default-features = false }
 
