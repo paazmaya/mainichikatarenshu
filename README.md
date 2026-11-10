@@ -4,6 +4,8 @@
 
 > Every day a martial arts form training!
 
+[![Continuous Integration](https://github.com/paazmaya/mainichikatarenshu/actions/workflows/rust-ci.yaml/badge.svg)](https://github.com/paazmaya/mainichikatarenshu/actions/workflows/rust-ci.yaml)
+
 E-ink display showing a kata for each day, along with current electricity price, using ESP-32 and written in Rust language.
 
 ## Project Status

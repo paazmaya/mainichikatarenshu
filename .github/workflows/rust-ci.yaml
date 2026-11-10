@@ -2,9 +2,15 @@ name: Continuous Integration
 
 on:
   push:
+    branches: [main]
     paths-ignore:
-      - "**/README.md"
+      - "**.md"
+      - "LICENSE*"
   pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE*"
   workflow_dispatch:
 
 concurrency:
