@@ -4,7 +4,7 @@
 
 **Project:** [mainichikatarenshu](https://github.com/paazmaya/mainichikatarenshu) - Daily kata training reminder using E-ink display  
 **Hardware:** CrowPanel ESP32 2.9" E-paper HMI Display (128×296, SSD1680 driver)  
-**Language:** Rust with ESP-IDF framework
+**Language:** Bare-metal Rust (`no_std`) with `esp-hal` & Embassy (previously ESP-IDF)
 
 ---
 
@@ -582,8 +582,11 @@ src/ssd1680/
 
 src/
 ├── kata_display.rs  # Application-specific display functions
-├── display_tests.rs # Comprehensive test suite
 └── main.rs         # Simplified main application
+
+tests/
+├── unit_tests.rs   # Unit tests with MockDisplay
+└── state_storage.rs # Flash storage integration tests
 ```
 
 ### Key Features
@@ -704,6 +707,77 @@ Designing for testability isn't an afterthought—it's fundamental. Pure functio
 
 ---
 
+## Chapter 9: Breaking Free from ESP-IDF (November 2026)
+
+### Why Leave ESP-IDF?
+
+While ESP-IDF provided a rapid initial path to prototype hardware peripherals using standard library abstractions, it carried significant friction:
+- **Heavyweight C toolchain dependencies:** Compiling required CMake, Ninja, Python virtual environments, and C bindings via `esp-idf-sys`.
+- **Scaffolding overhead:** Generating custom bootloaders required maintaining a parallel C boilerplate project (`kukkuu`) and managing `sdkconfig` files.
+- **Binary footprint and memory usage:** Linking the full FreeRTOS and ESP-IDF C runtime bloated the binary and complicated memory budgeting.
+- **Desire for pure Rust (`no_std`) reliability:** Moving to bare-metal Rust provides fine-grained control over allocations, strict compile-time safety, faster incremental build times, and zero mystery runtime tasks.
+
+### The Bare-Metal Target Shift
+
+The project moved target architectures from `xtensa-esp32s3-espidf` (with standard library support) to bare-metal `xtensa-esp32s3-none-elf` with `build-std = ["core", "alloc"]`.
+
+```toml
+# .cargo/config.toml
+[build]
+target = "xtensa-esp32s3-none-elf"
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor"
+rustflags = ["-C", "link-arg=-Tlinkall.x"]
+
+[unstable]
+build-std = ["core", "alloc"]
+```
+
+### The `esp-hal` & Embassy Architecture
+
+Replacing ESP-IDF meant transitioning to modern bare-metal Espressif crates:
+- **`esp-hal` (v1.2.0):** Direct hardware registers and peripherals (GPIO, SPI, UART, RTC, Timers) without FreeRTOS overhead.
+- **`esp-alloc`:** Lightweight in-RAM heap allocator for dynamic data structures (`heapless` and `alloc`).
+- **`esp-println`:** Immediate logging via UART or critical section without heavy logging daemons.
+- **`esp-radio` & `embassy-net`:** Station mode Wi-Fi powered by Espressif's radio driver and Embassy async network stack.
+
+The main entry point was rewritten using `#[esp_hal::main]` (or `#[esp_rtos::main]` when Wi-Fi is enabled) with explicit peripheral ownership and async task coordination.
+
+### Retiring the Bootloader Project
+
+With `espflash` managing partition tables and flashing directly, the helper C project `kukkuu/` and `sdkconfig.defaults` were retired and removed. Tooling configurations (`wokwi.toml`, VS Code launch profiles) were updated to target the `xtensa-esp32s3-none-elf` binary.
+
+**SD Prompt:** `A spacecraft jettisoning heavy booster stages to reveal a sleek, lightweight satellite, minimalism concept, cybernetic aesthetic, clean blue and silver lines, high tech digital art`
+
+---
+
+## Chapter 10: Robust Flash Persistence & Monotonic Input (November 2026)
+
+### Partition Validation in Rust (`src/partitions.rs`)
+
+Rather than trusting undocumented flash offsets or relying on ESP-IDF NVS wrappers, the firmware now inspects and parses the ESP32 partition table directly from raw flash:
+- Reads the partition table from offset `0x8000`.
+- Validates the table structure and verifies the MD5 checksum.
+- Asserts that a dedicated `training` partition (128 KiB at `0x420000`) exists, is correctly sector-aligned, and does not overlap with application or NVS regions.
+- Fails fast before mounting any state storage.
+
+### Atomic State Storage (`src/storage.rs`)
+
+Training state snapshots are managed through `sequential-storage` using `postcard` serialization over flash sectors:
+- Power-loss safe snapshots preserve the active day's kata and completion timestamp.
+- Queue holds up to 32 pending records for later synchronization.
+- Backwards time jumps are detected and rejected to protect training streak integrity.
+
+### Monotonic Button Debouncer (`src/buttons.rs`)
+
+The old button handling relied on FreeRTOS task notifications and OS threads (`src/input/`). The new architecture introduces a pure monotonic clock debouncer:
+- Tracks millisecond timestamps from the RTC timer.
+- Detects transitions without background polling tasks or thread allocations.
+- Rejects monotonic clock inconsistencies while remaining completely `no_std` compatible.
+
+---
+
 ## Conclusion
 
 Building a Rust driver for SSD1680 E-paper display was a journey through hardware quirks, toolchain battles, and careful code archaeology. The key was patience—both in waiting for the BUSY pin and in methodically comparing working implementations.
@@ -711,6 +785,8 @@ Building a Rust driver for SSD1680 E-paper display was a journey through hardwar
 The result is a robust, well-documented driver that handles the specific characteristics of the CrowPanel ESP32 E-paper display. Every bug became a learning opportunity, every fix was documented, and unused code remains as a testament to the exploration process.
 
 The March 2026 refactoring transformed the codebase from functional but repetitive to clean, maintainable, and thoroughly tested. The universal text rendering function alone eliminated 8+ repetitive patterns, while the modular architecture ensures future development remains organized and testable.
+
+Migrating from the ESP-IDF framework to bare-metal `esp-hal` delivered a lightweight, fast-building, and robust foundation with pure Rust partition safety, atomic flash snapshots, and async Embassy networking.
 
 The project continues toward its goal: a daily kata reminder that combines traditional martial arts practice with modern embedded systems, all written in clean, maintainable Rust.
 
@@ -728,6 +804,7 @@ The project continues toward its goal: a daily kata reminder that combines tradi
 - **November 8, 2025, 8:50 AM** - Function usage analysis completed
 - **November 8, 2025, 9:02 AM** - Refactoring finished, driver cleaned up
 - **March 7, 2026, 12:36 AM** - Great refactoring completed with modular architecture
+- **November 6, 2026** - Migration from ESP-IDF to `esp-hal` bare-metal with Embassy networking and atomic flash storage
 
 Total development time for driver: ~2 hours of focused debugging  
 Total refactoring time: ~4 hours of systematic improvement  
@@ -743,4 +820,4 @@ _This blog post documents the development journey of the [mainichikatarenshu](ht
 **License:** MIT  
 **Author:** Jukka Paasonen ([@paazmaya](https://github.com/paazmaya))  
 **Hardware:** CrowPanel ESP32 2.9" E-paper Display  
-**Language:** Rust with ESP-IDF framework
+**Language:** Bare-metal Rust (`no_std`) with `esp-hal` & Embassy (previously ESP-IDF)

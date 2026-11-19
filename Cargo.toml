@@ -65,15 +65,8 @@ version = "0.8.2"
 version = "1.0.0"
 # https://github.com/rust-embedded/embedded-hal
 
-# https://github.com/mbv/ssd1680
-# From there:
 [dependencies.display-interface]
 version = "0.5.0"
-
-# Try it one more time...
-# https://github.com/caemor/epd-waveshare
-[dependencies.epd-waveshare]
-version = "0.6.0"
 
 [build-dependencies]
 # Image processing at build time

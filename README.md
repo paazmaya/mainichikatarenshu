@@ -546,34 +546,39 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 
 ### Phase 2: Core Application Features 🚧 IN PROGRESS
 
-- [ ] **Kata Management**
-  - [ ] Define kata list (martial arts forms)
-  - [ ] Random kata selection algorithm
-  - [ ] Daily kata rotation logic
+- [x] **Kata Management**
+  - [x] Define kata list via `kata.yaml` embedded at build time
+  - [x] Random kata selection algorithm with RNG
+  - [x] Daily kata rotation state machine (`src/training.rs`)
+  - [x] Helsinki timezone and daylight savings schedule (`src/schedule.rs`)
+- [x] **Partition Validation & Flash Persistence**
+  - [x] Partition table structure and checksum validation (`src/partitions.rs`)
+  - [x] Sequential flash snapshots with postcard serialization (`src/storage.rs`)
 - [ ] **Button Input Handling**
-  - [ ] MENU button (IO2) - Navigate/confirm
+  - [x] Monotonic debouncer for active-low buttons (`src/buttons.rs`)
+  - [x] CONF button (GPIO5) confirm training
+  - [ ] MENU button (IO2) - Navigate/menu
   - [ ] EXIT button (IO1) - Cancel/wake
   - [ ] Rotary switch (IO4/IO6/IO5) - Selection
-- [ ] **Power Management**
-  - [ ] Deep sleep implementation
-  - [ ] Wake at 07:00 EET (RTC alarm)
-  - [ ] Sleep at 23:00 EET
-  - [ ] Button wake-up support
+- [ ] **Power Management & Low Power**
+  - [ ] SSD1680 display deep sleep command (`sleep()`)
+  - [ ] ESP32-S3 RTC timer deep sleep (wake at 07:00 Helsinki time)
+  - [ ] GPIO button wake-up support (ext0/ext1 wakeup on CONF button)
 
 ### Phase 3: Connectivity & Data Sync 📋 PLANNED
 
-- [ ] **WiFi Integration**
-  - [ ] WiFi connection management
-  - [ ] NTP time synchronization
-  - [ ] Online kata list fetching
-- [ ] **Google Drive Integration**
-  - [ ] OAuth authentication
-  - [ ] Spreadsheet API integration
-  - [ ] Training log sync (date, kata, confirmed, time)
+- [ ] **WiFi & Time Integration**
+  - [x] Station-mode connection via `esp-radio` and `embassy-net` (`src/wireless.rs`)
+  - [ ] Automatic SNTP / NTP network time synchronization (replacing manual UART `TIME`)
+  - [ ] Persistent Wi-Fi credentials in flash/NVS (avoid re-entering over UART)
+- [ ] **Remote Synchronization (Supabase)**
+  - [x] Local training record queue (up to 32 days in flash)
+  - [x] UART manual export and acknowledgement (`LIST`, `ACK`)
+  - [ ] HTTP/REST client to sync training records to Supabase
+  - [ ] Automatic record acknowledgement on successful sync
 - [ ] **Electricity Price Display**
-  - [ ] API integration for energy prices
-  - [ ] Price display on screen
-  - [ ] Historical price tracking
+  - [ ] API integration for hourly Nord Pool / energy spot prices
+  - [ ] E-paper display widget for current and upcoming electricity prices
 
 ### Phase 4: Enhancements 🎯 FUTURE
 
