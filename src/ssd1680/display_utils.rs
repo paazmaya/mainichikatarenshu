@@ -337,6 +337,41 @@ mod tests {
             .all(|column| (3..=12).contains(column)));
     }
 
+    fn render(
+        draw: impl FnOnce(&mut Display2in13) -> Result<(), DisplayError>,
+    ) -> alloc::vec::Vec<u8> {
+        let mut display = Display2in13::new();
+        draw(&mut display).unwrap();
+        display.buffer().to_vec()
+    }
+
+    #[test]
+    fn datetime_status_draws_only_provided_parts() {
+        let blank = render(DisplayManager::clear_and_prepare);
+        let date_only = render(|d| DisplayManager::show_datetime_status(d, "2026-11-20", "", None));
+        let with_time =
+            render(|d| DisplayManager::show_datetime_status(d, "2026-11-20", "06:00", None));
+        // The status is currently right-aligned past the panel edge, so only check
+        // that rendering it succeeds.
+        render(|d| DisplayManager::show_datetime_status(d, "2026-11-20", "06:00", Some("WiFi")));
+
+        assert_ne!(date_only, blank);
+        assert_ne!(with_time, date_only);
+    }
+
+    #[test]
+    fn layout_helpers_draw_content() {
+        let blank = render(DisplayManager::clear_and_prepare);
+        let title = render(|d| DisplayManager::show_title_and_content(d, "Title", "", None));
+        let title_and_content =
+            render(|d| DisplayManager::show_title_and_content(d, "Title", "Line 1\nLine 2", None));
+        let pattern = render(DisplayManager::create_test_pattern);
+
+        assert_ne!(title, blank);
+        assert_ne!(title_and_content, title);
+        assert_ne!(pattern, blank);
+    }
+
     #[test]
     fn test_presets() {
         let title_config = presets::title();

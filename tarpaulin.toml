@@ -1,0 +1,9 @@
+# Coverage for the host-testable library code.
+# Run with the stable toolchain: `cargo +stable tarpaulin`
+# (the pinned `esp` toolchain applies `build-std` to every target, which breaks host builds).
+[default]
+features = "test-utils"
+target = "host-tuple"
+run-types = ["Lib", "Tests"]
+fail-under = 90
+exclude-files = ["src/**/*_tests.rs"]

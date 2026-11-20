@@ -70,6 +70,10 @@ use embedded_hal::spi::SpiDevice;
 use crate::ssd1680::interface::DisplayInterface;
 use crate::ssd1680::{cmd::Cmd, color, flag::Flag, HEIGHT, WIDTH};
 
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;
+
 /// SSD1680 E-Paper Display Driver
 ///
 /// Main driver struct that manages the display hardware interface and provides

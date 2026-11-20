@@ -604,10 +604,12 @@ The project is configured with both library and binary targets to enable differe
 ### 🔧 Test Configuration
 
 #### Feature Flags
+
 - `test-utils` - Disables ESP32-specific dependencies for hardware-independent testing
 - `experimental` - Enables experimental ESP-IDF features
 
 #### Conditional Compilation
+
 ```rust
 #[cfg(not(feature = "test-utils"))]
 // ESP32-specific code (WiFi, GPIO, SPI)
@@ -629,6 +631,9 @@ cargo test --test unit_tests --features test-utils
 
 # Hardware tests - Requires ESP32 device
 cargo +esp test
+
+# Coverage - settings in tarpaulin.toml, fails below 90%
+cargo +stable tarpaulin
 ```
 
 #### CI/CD Pipeline
@@ -651,27 +656,32 @@ The GitHub Actions workflow runs tests in two stages:
 #### ✅ Hardware-Independent Tests
 
 **Text Processing (`src/ssd1680/text.rs`)**
+
 - Text wrapping algorithms
 - Width measurement calculations
 - Font rendering configurations
 - Alignment logic
 
 **Color Conversions (`src/ssd1680/color.rs`)**
+
 - Bit value calculations
 - Byte value conversions
 - Color inversion operations
 
 **Business Logic (`src/kata_display.rs`)**
+
 - Training statistics calculations
 - Data structure operations
 - State management
 
 **Display Utilities (`src/ssd1680/display_utils.rs`)**
+
 - Configuration presets
 - Layout calculations
 - Text positioning logic
 
 **Graphics Calculations (`src/ssd1680/graphics.rs`)**
+
 - Rotation mathematics
 - Buffer operations
 - Coordinate transformations
@@ -679,6 +689,7 @@ The GitHub Actions workflow runs tests in two stages:
 #### ⚠️ Hardware-Dependent Tests
 
 **ESP32 Integration**
+
 - SPI communication
 - GPIO pin operations
 - WiFi connectivity
@@ -688,6 +699,7 @@ The GitHub Actions workflow runs tests in two stages:
 ### 🎯 Test Structure
 
 #### Unit Tests (In-module)
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -699,6 +711,7 @@ mod tests {
 ```
 
 #### Integration Tests (`tests/unit_tests.rs`)
+
 ```rust
 use embedded_graphics::mock_display::MockDisplay;
 use mainichikatarenshu::ssd1680::text::TextRenderer;
@@ -711,6 +724,7 @@ fn test_complete_rendering_pipeline() {
 ```
 
 #### Mock Displays
+
 Tests use `embedded_graphics::mock_display::MockDisplay` to simulate the e-paper display without requiring hardware:
 
 ```rust
@@ -722,6 +736,7 @@ assert!(result.is_ok());
 ### 🔍 Test Coverage
 
 #### Current Coverage
+
 - ✅ Text rendering algorithms (100%)
 - ✅ Color conversions (100%)
 - ✅ Training statistics (100%)
@@ -741,10 +756,10 @@ assert!(result.is_ok());
 fn test_new_feature() {
     // Arrange
     let input = create_test_input();
-    
+
     // Act
     let result = function_to_test(input);
-    
+
     // Assert
     assert_eq!(result.expected_value, actual_value);
 }
@@ -759,6 +774,7 @@ fn test_new_feature() {
 3. **Import Errors** - Check conditional compilation directives
 
 #### Debug Commands
+
 ```bash
 # Verbose test output
 cargo test --lib --features test-utils -- --nocapture
@@ -773,6 +789,7 @@ RUST_BACKTRACE=1 cargo test --lib --features test-utils
 ### 📊 CI Test Results
 
 The CI pipeline provides:
+
 - ✅ **Unit Test Results** - All pure logic tests
 - ✅ **Integration Test Results** - Component interaction tests
 - ✅ **Build Verification** - ESP32 firmware compilation
@@ -795,6 +812,7 @@ The project uses a custom build script (`build.rs`) that:
 3. **Embeds resources** - Binary data is included via `include_bytes!` macro
 
 To use your own logo:
+
 1. Replace `logo.png` in the project root (128×296 pixels, black & white recommended)
 2. Run `cargo build` - the image will be automatically converted
 

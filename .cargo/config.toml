@@ -6,13 +6,11 @@ target = "xtensa-esp32s3-none-elf"
 
 # https://github.com/esp-rs/espflash
 runner = "espflash flash --monitor"
-rustflags = [
-  "-C", "link-arg=-Tlinkall.x",
-]
+rustflags = ["-C", "link-arg=-Tlinkall.x"]
 
 [unstable]
 # Required for std support. Rust does not provide std libraries for ESP32 targets since they are tier-2/-3.
 build-std = ["core", "alloc"]
 
 [env]
-MCU="esp32s3"
+MCU = "esp32s3"

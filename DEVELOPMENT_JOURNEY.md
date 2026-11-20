@@ -323,8 +323,9 @@ While Chapter 7 focused on reducing repetition within the driver, a more compreh
 ### The Universal Text Problem
 
 The application needed to display various types of text:
+
 - WiFi status messages
-- Date and time information  
+- Date and time information
 - Kata reminders
 - Menu options
 - Error messages
@@ -373,6 +374,7 @@ TextRenderer::write_text(
 ```
 
 **Features:**
+
 - Automatic text wrapping based on display width
 - Multiple alignment options (left, center, right)
 - Configurable fonts, colors, and line spacing
@@ -392,6 +394,7 @@ DisplayManager::show_datetime_status(display, "2025-03-07", "18:00", Some("WiFi 
 ```
 
 **Predefined configurations** for common use cases:
+
 - `presets::title()` - Large font for titles
 - `presets::body()` - Standard body text
 - `presets::status()` - Right-aligned status messages
@@ -408,7 +411,7 @@ KataDisplayManager::show_kata_reminder(
     display,
     "2025-03-07",
     "18:00",
-    "Heian Shodan", 
+    "Heian Shodan",
     Some("WiFi Connected")
 )?;
 
@@ -420,6 +423,7 @@ KataDisplayManager::show_completion_screen(
 ```
 
 **Features:**
+
 - Complete kata reminder screens
 - Training statistics display with `TrainingStats` struct
 - Menu system with selection highlighting
@@ -462,6 +466,7 @@ fn test_multiline_text_handling() {
 The `main.rs` file transformed from repetitive manual text handling to clean, declarative calls:
 
 **Before:**
+
 ```rust
 // ❌ MANUAL - 20+ lines of repetitive code
 let mut display = Display2in13::new();
@@ -491,6 +496,7 @@ Text::new("Current Date:", Point::new(10, 10), label_style)
 ```
 
 **After:**
+
 ```rust
 // ✅ DECLARATIVE - 5 lines of clear intent
 let mut display = DisplayManager::create_display();
@@ -512,23 +518,27 @@ KataDisplayManager::show_kata_reminder(
 ### Quantified Improvements
 
 **Code Reduction:**
+
 - **main.rs:** Reduced from ~50 lines of display code to ~10 lines
 - **Text rendering:** 1 universal function replaces 8+ manual patterns
 - **Display patterns:** 6 utility functions replace 15+ repetitive code blocks
 
 **Maintainability:**
+
 - **Single source of truth** for text rendering logic
 - **Centralized configuration** in presets
 - **Clear separation** between generic utilities and application logic
 - **Consistent API** across all display operations
 
 **Testability:**
+
 - **Pure functions** that accept generic display traits
 - **Mock-friendly** design for unit testing
 - **Comprehensive coverage** with 15+ test functions
 - **Integration tests** for complete display pipelines
 
 **Reusability:**
+
 - **Universal text function** handles any text length automatically
 - **Configurable styling** through `TextConfig` builder pattern
 - **Generic design** works with any display implementing `Display` trait
@@ -712,6 +722,7 @@ Designing for testability isn't an afterthought—it's fundamental. Pure functio
 ### Why Leave ESP-IDF?
 
 While ESP-IDF provided a rapid initial path to prototype hardware peripherals using standard library abstractions, it carried significant friction:
+
 - **Heavyweight C toolchain dependencies:** Compiling required CMake, Ninja, Python virtual environments, and C bindings via `esp-idf-sys`.
 - **Scaffolding overhead:** Generating custom bootloaders required maintaining a parallel C boilerplate project (`kukkuu`) and managing `sdkconfig` files.
 - **Binary footprint and memory usage:** Linking the full FreeRTOS and ESP-IDF C runtime bloated the binary and complicated memory budgeting.
@@ -737,6 +748,7 @@ build-std = ["core", "alloc"]
 ### The `esp-hal` & Embassy Architecture
 
 Replacing ESP-IDF meant transitioning to modern bare-metal Espressif crates:
+
 - **`esp-hal` (v1.2.0):** Direct hardware registers and peripherals (GPIO, SPI, UART, RTC, Timers) without FreeRTOS overhead.
 - **`esp-alloc`:** Lightweight in-RAM heap allocator for dynamic data structures (`heapless` and `alloc`).
 - **`esp-println`:** Immediate logging via UART or critical section without heavy logging daemons.
@@ -757,6 +769,7 @@ With `espflash` managing partition tables and flashing directly, the helper C pr
 ### Partition Validation in Rust (`src/partitions.rs`)
 
 Rather than trusting undocumented flash offsets or relying on ESP-IDF NVS wrappers, the firmware now inspects and parses the ESP32 partition table directly from raw flash:
+
 - Reads the partition table from offset `0x8000`.
 - Validates the table structure and verifies the MD5 checksum.
 - Asserts that a dedicated `training` partition (128 KiB at `0x420000`) exists, is correctly sector-aligned, and does not overlap with application or NVS regions.
@@ -765,6 +778,7 @@ Rather than trusting undocumented flash offsets or relying on ESP-IDF NVS wrappe
 ### Atomic State Storage (`src/storage.rs`)
 
 Training state snapshots are managed through `sequential-storage` using `postcard` serialization over flash sectors:
+
 - Power-loss safe snapshots preserve the active day's kata and completion timestamp.
 - Queue holds up to 32 pending records for later synchronization.
 - Backwards time jumps are detected and rejected to protect training streak integrity.
@@ -772,6 +786,7 @@ Training state snapshots are managed through `sequential-storage` using `postcar
 ### Monotonic Button Debouncer (`src/buttons.rs`)
 
 The old button handling relied on FreeRTOS task notifications and OS threads (`src/input/`). The new architecture introduces a pure monotonic clock debouncer:
+
 - Tracks millisecond timestamps from the RTC timer.
 - Detects transitions without background polling tasks or thread allocations.
 - Rejects monotonic clock inconsistencies while remaining completely `no_std` compatible.

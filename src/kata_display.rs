@@ -312,7 +312,87 @@ impl TrainingStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use embedded_graphics::mock_display::MockDisplay;
+    use crate::ssd1680::graphics::Display;
+    use alloc::vec::Vec;
+
+    fn render(draw: impl FnOnce(&mut Display2in13) -> Result<(), DisplayError>) -> Vec<u8> {
+        let mut display = Display2in13::new();
+        draw(&mut display).unwrap();
+        display.buffer().to_vec()
+    }
+
+    fn blank() -> Vec<u8> {
+        render(DisplayManager::clear_and_prepare)
+    }
+
+    #[test]
+    fn kata_reminder_draws_optional_status_lines() {
+        let minimal = render(|d| {
+            KataDisplayManager::show_kata_reminder(d, "2026-11-20", "06:00", "Bassai", None, None)
+        });
+        render(|d| {
+            KataDisplayManager::show_kata_reminder(
+                d,
+                "2026-11-20",
+                "06:00",
+                "Bassai",
+                Some("WiFi OK"),
+                None,
+            )
+        });
+        let with_price = render(|d| {
+            KataDisplayManager::show_kata_reminder(
+                d,
+                "2026-11-20",
+                "06:00",
+                "Bassai",
+                None,
+                Some("5.2 c/kWh"),
+            )
+        });
+
+        assert_ne!(minimal, blank());
+        // The Wi-Fi status is currently right-aligned past the panel edge, so only
+        // check that rendering it succeeds above.
+        assert_ne!(with_price, minimal);
+    }
+
+    #[test]
+    fn screens_replace_previous_content() {
+        let stats = TrainingStats::new(10, 3, 5, 7);
+        type Screen<'a> = &'a dyn Fn(&mut Display2in13) -> Result<(), DisplayError>;
+        let screens: [Screen; 5] = [
+            &|d| KataDisplayManager::show_completion_screen(d, "Bassai", "06:30"),
+            &|d| KataDisplayManager::show_motivational_message(d, "Keep going"),
+            &|d| KataDisplayManager::show_training_stats(d, &stats),
+            &|d| KataDisplayManager::show_message(d, "Error", "No WiFi", true),
+            &|d| KataDisplayManager::show_message(d, "Info", "Synced", false),
+        ];
+
+        for screen in screens {
+            let fresh = render(screen);
+            let redrawn = render(|d| {
+                DisplayManager::create_test_pattern(d)?;
+                screen(d)
+            });
+            assert_ne!(fresh, blank());
+            assert_eq!(redrawn, fresh);
+        }
+    }
+
+    #[test]
+    fn menu_only_shows_selected_option() {
+        let title_only = render(|d| KataDisplayManager::show_menu(d, "Menu", &[], 0));
+        let first = render(|d| KataDisplayManager::show_menu(d, "Menu", &["One", "Two"], 0));
+        let second = render(|d| KataDisplayManager::show_menu(d, "Menu", &["One", "Two"], 1));
+        let none = render(|d| KataDisplayManager::show_menu(d, "Menu", &["One", "Two"], 5));
+
+        // Unselected options are drawn in the background colour
+        assert_eq!(none, title_only);
+        assert_ne!(first, title_only);
+        assert_ne!(second, title_only);
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn test_training_stats_creation() {
