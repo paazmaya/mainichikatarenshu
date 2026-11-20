@@ -51,6 +51,19 @@ pub fn at(now: DateTime<Utc>) -> Result<Schedule, ScheduleError> {
     })
 }
 
+/// Calculate duration in seconds until the next transition from `now`.
+/// Returns `None` if `now` is past the transition or schedule calculation fails.
+pub fn duration_until_next_transition(now: DateTime<Utc>) -> Option<u64> {
+    let sched = at(now).ok()?;
+    let diff = sched.next_transition.signed_duration_since(now);
+    let secs = diff.num_seconds();
+    if secs > 0 {
+        Some(secs as u64)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +100,12 @@ mod tests {
             at(autumn).unwrap().next_transition - autumn,
             Duration::hours(9)
         );
+    }
+
+    #[test]
+    fn test_duration_until_next_transition() {
+        let night = utc(2026, 7, 5, 20, 0); // 23:00 Helsinki
+        let secs = duration_until_next_transition(night).unwrap();
+        assert_eq!(secs, 8 * 3600); // 8 hours until 07:00 (04:00 UTC)
     }
 }

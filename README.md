@@ -562,7 +562,7 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
   - [ ] Rotary switch (IO4/IO6/IO5) - Selection
 - [ ] **Power Management & Low Power**
   - [x] SSD1680 display deep sleep command (`sleep()`)
-  - [ ] ESP32-S3 RTC timer deep sleep (wake at 07:00 Helsinki time)
+  - [x] Schedule-aware night sleep (07:00 Helsinki alarm)
   - [ ] GPIO button wake-up support (ext0/ext1 wakeup on CONF button)
 
 ### Phase 3: Connectivity & Data Sync 📋 PLANNED

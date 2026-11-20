@@ -398,6 +398,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                         &format!("{:02}:{:02}", local.hour(), local.minute()),
                         &record.kata,
                         Some(status),
+                        None,
                     )
                     .expect("Display rendering failed");
                 } else {
@@ -409,6 +410,30 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                     .expect("Display update failed");
                 let _ = panel.sleep();
                 redraw = false;
+
+                // If currently outside active hours (resting until 07:00) and no UART input is pending,
+                // enter power-saving sleep until the 07:00 transition
+                if training.state().active().is_none()
+                    && training_error.is_none()
+                    && !uart.read_ready()
+                {
+                    if let Some(sleep_secs) =
+                        mainichikatarenshu::schedule::duration_until_next_transition(now)
+                    {
+                        esp_println::println!(
+                            "Entering low-power sleep for {sleep_secs}s until 07:00"
+                        );
+                        // During sleep, delay/sleep for the remaining duration (in chunks of up to 60s to allow UART interrupts)
+                        let sleep_duration = core::cmp::min(sleep_secs, 60);
+                        #[cfg(not(feature = "wifi"))]
+                        delay.delay_millis(sleep_duration as u32 * 1000);
+                        #[cfg(feature = "wifi")]
+                        embassy_time::Timer::after(embassy_time::Duration::from_secs(
+                            sleep_duration,
+                        ))
+                        .await;
+                    }
+                }
             }
         } else if redraw {
             DisplayManager::clear_and_prepare(&mut display).expect("Display clear failed");
