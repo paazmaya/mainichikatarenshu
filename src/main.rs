@@ -277,6 +277,19 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
             }
         }
 
+        #[cfg(feature = "wifi")]
+        if let Ok(unix_secs) = wireless::TIME_SYNC.try_receive() {
+            if let Some(micros) = unix_secs.checked_mul(1_000_000) {
+                if micros >= 946_684_800_000_000 {
+                    rtc.set_current_time_us(micros);
+                    time_valid = true;
+                    last_second = None;
+                    redraw = true;
+                    esp_println::println!("Clock synchronized via SNTP: {unix_secs}");
+                }
+            }
+        }
+
         let millis = rtc.time_since_power_up().as_millis();
         let event = button
             .sample(input.is_high(), millis)

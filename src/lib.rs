@@ -16,6 +16,7 @@ pub mod kata_display;
 pub mod network_config;
 pub mod partitions;
 pub mod schedule;
+pub mod sntp;
 pub mod ssd1680;
 pub mod storage;
 pub mod training;

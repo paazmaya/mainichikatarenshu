@@ -561,7 +561,7 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
   - [ ] EXIT button (IO1) - Cancel/wake
   - [ ] Rotary switch (IO4/IO6/IO5) - Selection
 - [ ] **Power Management & Low Power**
-  - [ ] SSD1680 display deep sleep command (`sleep()`)
+  - [x] SSD1680 display deep sleep command (`sleep()`)
   - [ ] ESP32-S3 RTC timer deep sleep (wake at 07:00 Helsinki time)
   - [ ] GPIO button wake-up support (ext0/ext1 wakeup on CONF button)
 
@@ -569,7 +569,7 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 
 - [ ] **WiFi & Time Integration**
   - [x] Station-mode connection via `esp-radio` and `embassy-net` (`src/wireless.rs`)
-  - [ ] Automatic SNTP / NTP network time synchronization (replacing manual UART `TIME`)
+  - [x] Automatic SNTP / NTP network time synchronization (`src/sntp.rs`)
   - [ ] Persistent Wi-Fi credentials in flash/NVS (avoid re-entering over UART)
 - [ ] **Remote Synchronization (Supabase)**
   - [x] Local training record queue (up to 32 days in flash)
