@@ -366,6 +366,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                 panel
                     .write_buffer_and_update(display.buffer())
                     .expect("Display update failed");
+                let _ = panel.sleep();
                 redraw = false;
             }
         } else if redraw {
@@ -375,6 +376,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
             panel
                 .write_buffer_and_update(display.buffer())
                 .expect("Display update failed");
+            let _ = panel.sleep();
             redraw = false;
         }
         #[cfg(not(feature = "wifi"))]

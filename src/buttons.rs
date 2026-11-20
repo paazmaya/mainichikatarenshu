@@ -1,5 +1,20 @@
 //! Debouncing for active-low CrowPanel buttons.
 
+/// Button identifiers corresponding to CrowPanel hardware inputs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ButtonId {
+    /// Confirm button / rotary push switch (GPIO5)
+    Confirm,
+    /// Menu button (GPIO2)
+    Menu,
+    /// Exit button (GPIO1)
+    Exit,
+    /// Rotary switch Down (GPIO4)
+    Down,
+    /// Rotary switch Up (GPIO6)
+    Up,
+}
+
 /// A debounced button transition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Event {

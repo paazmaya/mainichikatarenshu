@@ -813,7 +813,9 @@ where
 
     /// Put device into deep sleep mode to save power
     ///
-    /// **UNUSED** - Not called from main.rs execution path
+    /// The display controller stops its DC/DC converter and internal clock,
+    /// reducing power to near zero while the e-paper panel retains its image.
+    /// A hardware reset (`cpp_init()`) is required to wake it.
     pub fn sleep(&mut self) -> Result<(), DisplayError> {
         log::info!("Putting display into deep sleep mode");
         self.interface
@@ -1254,6 +1256,8 @@ where
     ///
     /// - `main.rs` - For displaying date text and logo image
     pub fn write_buffer_and_update(&mut self, buffer: &[u8]) -> Result<(), DisplayError> {
+        // If the panel was put to sleep, cpp_init resets and wakes it up
+        self.cpp_init()?;
         self.interface.cmd(Cmd::WRITE_BW_DATA)?;
         self.interface.data(buffer)?;
         self.cpp_update()?;
