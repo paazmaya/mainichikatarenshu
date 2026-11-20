@@ -14,3 +14,7 @@ build-std = ["core", "alloc"]
 
 [env]
 MCU = "esp32s3"
+# mbedtls-rs-sys 0.3.1 uses non-recursive bindgen allowlisting for `hook-timer`
+# and omits macOS's intermediate `__darwin_time_t` typedef (`long` on LP64 Darwin).
+BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_darwin = "-D__darwin_time_t=long"
+BINDGEN_EXTRA_CLANG_ARGS_x86_64_apple_darwin = "-D__darwin_time_t=long"

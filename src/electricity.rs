@@ -1,19 +1,21 @@
 //! Finnish spot electricity price retrieval helpers.
 //!
-//! Prices come from the [porssisahko.net](https://porssisahko.net/api) API,
-//! which reports the hourly price in cents per kilowatt-hour (c/kWh), VAT
-//! included. `GET /v1/price.json?date=YYYY-MM-DD&hour=H` returns `{"price":11.972}`
-//! for the given Helsinki-local hour.
-//!
-//! The API only serves HTTPS; plain HTTP requests are redirected.
+//! Prices come from the [porssisahko.net](https://porssisahko.net/api) v2 API,
+//! which reports the 15-minute (quarter-hour) price in cents per kilowatt-hour
+//! (c/kWh), VAT included. `GET /v2/price.json?date=YYYY-MM-DDTHH:MM:SS.000Z`
+//! returns `{"price":11.972}` for the quarter-hour containing the UTC timestamp.
 
-use chrono::{DateTime, Timelike, Utc};
-use chrono_tz::Europe::Helsinki;
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use core::fmt::Write;
 use heapless::String;
+use serde::Deserialize;
+use serde_json::value::RawValue;
 
 /// Host name of the price API.
 pub const PRICE_API_HOST: &str = "api.porssisahko.net";
+
+/// Duration of one spot-price interval (15 minutes) in seconds.
+const PRICE_SLOT_SECS: i64 = 15 * 60;
 
 /// An electricity price, stored in tenths of a cent per kWh to avoid floats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,28 +45,69 @@ impl Price {
     }
 }
 
-/// Request path for the price of the Helsinki-local hour containing `now`.
+/// Tracks which 15-minute UTC price slot has been delivered to the display.
+#[derive(Default)]
+pub struct PriceUpdates {
+    last_delivered_slot: Option<i64>,
+}
+
+impl PriceUpdates {
+    /// Whether the current 15-minute interval still needs a price update.
+    pub fn needs_price(&self, now: DateTime<Utc>) -> bool {
+        self.last_delivered_slot != Some(now.timestamp().div_euclid(PRICE_SLOT_SECS))
+    }
+
+    /// Deliver a price and mark its 15-minute slot complete only if delivery succeeds.
+    pub fn deliver<E>(
+        &mut self,
+        now: DateTime<Utc>,
+        price: Price,
+        publish: impl FnOnce(String<16>) -> Result<(), E>,
+    ) -> Result<(), E> {
+        publish(price.format())?;
+        self.last_delivered_slot = Some(now.timestamp().div_euclid(PRICE_SLOT_SECS));
+        Ok(())
+    }
+}
+
+/// Request path for the 15-minute price containing `now` (`ISO 8601` UTC).
 pub fn price_request_path(now: DateTime<Utc>) -> String<48> {
-    let local = now.with_timezone(&Helsinki);
     let mut path = String::new();
-    // The longest path is 39 bytes, so this cannot overflow.
+    // `/v2/price.json?date=YYYY-MM-DDTHH:MM:SS.000Z` is 44 bytes for 4-digit years.
     let _ = write!(
         path,
-        "/v1/price.json?date={}&hour={}",
-        local.date_naive(),
-        local.hour()
+        "/v2/price.json?date={:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000Z",
+        now.year(),
+        now.month(),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
     );
     path
 }
 
-/// Extract the price from a `price.json` response body or full HTTP response.
+/// Extract a decimal price from a `price.json` body or full HTTP response.
+///
+/// Scientific notation is not supported.
 pub fn parse_price_response(body: &str) -> Option<Price> {
-    let after_key = &body[body.find("\"price\"")? + "\"price\"".len()..];
-    let value = after_key.trim_start().strip_prefix(':')?.trim_start();
-    let end = value
-        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
-        .unwrap_or(value.len());
-    parse_decimal_tenths(&value[..end]).map(Price::from_tenths_c_kwh)
+    #[derive(Deserialize)]
+    struct PriceDocument<'a> {
+        #[serde(borrow)]
+        price: &'a RawValue,
+    }
+
+    let body = if body.starts_with("HTTP/") {
+        let response = crate::http::parse_response(body.as_bytes()).ok()?;
+        if !response.is_success() {
+            return None;
+        }
+        core::str::from_utf8(response.body).ok()?
+    } else {
+        body
+    };
+    let document: PriceDocument<'_> = serde_json::from_str(body).ok()?;
+    parse_decimal_tenths(document.price.get()).map(Price::from_tenths_c_kwh)
 }
 
 /// Parse a decimal number into tenths, rounding half away from zero.
@@ -124,22 +167,60 @@ mod tests {
             r#"{"price":"1.5"}"#,
             r#"{"price":.5}"#,
             r#"{"price":1.2.3}"#,
+            r#"{"price":1oops}"#,
+            r#"{"price":1}garbage"#,
+            r#"{"other":{"price":1}}"#,
+            r#"{"price":1,"price":2}"#,
+            "HTTP/1.1 200 OK\r\nX-Price: \"price\":1\r\n\r\n{}",
+            "HTTP/1.1 500 Error\r\n\r\n{\"price\":1}",
         ] {
             assert_eq!(parse_price_response(body), None, "{body}");
         }
     }
 
     #[test]
-    fn request_path_uses_helsinki_hour() {
-        let winter = Utc.with_ymd_and_hms(2026, 11, 20, 22, 30, 0).unwrap();
+    fn request_path_uses_unambiguous_utc_iso_timestamp() {
+        let winter = Utc.with_ymd_and_hms(2026, 11, 20, 22, 30, 5).unwrap();
         assert_eq!(
             price_request_path(winter),
-            "/v1/price.json?date=2026-11-21&hour=0"
+            "/v2/price.json?date=2026-11-20T22:30:05.000Z"
         );
-        let summer = Utc.with_ymd_and_hms(2026, 7, 5, 4, 0, 0).unwrap();
+        let summer = Utc.with_ymd_and_hms(2026, 7, 5, 4, 15, 0).unwrap();
         assert_eq!(
             price_request_path(summer),
-            "/v1/price.json?date=2026-07-05&hour=7"
+            "/v2/price.json?date=2026-07-05T04:15:00.000Z"
         );
+    }
+
+    #[test]
+    fn failed_delivery_remains_due_until_published() {
+        let now = Utc.with_ymd_and_hms(2026, 11, 20, 10, 0, 0).unwrap();
+        let same_quarter = Utc.with_ymd_and_hms(2026, 11, 20, 10, 14, 59).unwrap();
+        let next_quarter = Utc.with_ymd_and_hms(2026, 11, 20, 10, 15, 0).unwrap();
+        let mut updates = PriceUpdates::default();
+        let price = Price::from_tenths_c_kwh(123);
+        assert!(updates.needs_price(now));
+        assert_eq!(updates.deliver(now, price, |_| Err("full")), Err("full"));
+        assert!(updates.needs_price(now));
+        updates
+            .deliver(now, price, |text| {
+                assert_eq!(text, "12.3 c/kWh");
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert!(!updates.needs_price(same_quarter));
+        assert!(updates.needs_price(next_quarter));
+    }
+
+    #[test]
+    fn repeated_helsinki_hour_uses_distinct_utc_paths_and_slots() {
+        let first = Utc.with_ymd_and_hms(2026, 10, 25, 0, 30, 0).unwrap();
+        let second = Utc.with_ymd_and_hms(2026, 10, 25, 1, 30, 0).unwrap();
+        assert_ne!(price_request_path(first), price_request_path(second));
+        let mut updates = PriceUpdates::default();
+        updates
+            .deliver(first, Price::from_tenths_c_kwh(1), |_| Ok::<_, ()>(()))
+            .unwrap();
+        assert!(updates.needs_price(second));
     }
 }

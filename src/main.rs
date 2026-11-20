@@ -88,13 +88,13 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     #[cfg(not(feature = "wifi"))]
     esp_alloc::heap_allocator!(size: 64 * 1024);
     #[cfg(feature = "wifi")]
-    esp_alloc::heap_allocator!(size: 128 * 1024);
+    esp_alloc::heap_allocator!(size: 160 * 1024);
 
     #[cfg(feature = "wifi")]
     let wifi_available = {
         let timer = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
         esp_rtos::start(timer.timer0, peripherals.FROM_CPU_INTR0);
-        wireless::start(peripherals.WIFI, spawner)
+        wireless::start(peripherals.WIFI, peripherals.RNG, peripherals.ADC1, spawner)
     };
 
     let mut panel = init_panel(
@@ -115,8 +115,13 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let training = load_training(peripherals.FLASH, &mut scratch);
     let rtc = Rtc::new(peripherals.RTC_TIMER);
     // The RTC keeps time only across deep sleep; after other resets it must be set again.
+    let initial_rtc_us = rtc.current_time_us();
     let time_valid = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep)
-        && clock::is_rtc_time_valid(rtc.current_time_us());
+        && clock::is_rtc_time_valid(initial_rtc_us);
+    #[cfg(feature = "wifi")]
+    if time_valid {
+        wireless::set_wall_clock(clock::unix_secs_from_rtc_micros(initial_rtc_us));
+    }
     let buttons = Buttons {
         bank: ButtonBank::new(DEBOUNCE_MS, rtc.time_since_power_up().as_millis()),
         confirm: pull_up_input(peripherals.GPIO5),
@@ -144,7 +149,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
         #[cfg(feature = "wifi")]
         wifi: wireless::Provisioning::new(wifi_available),
         #[cfg(feature = "wifi")]
-        sync_in_flight: false,
+        record_sync: mainichikatarenshu::supabase::RecordSync::default(),
     };
     #[cfg(feature = "wifi")]
     app.connect_saved_wifi();
@@ -286,9 +291,9 @@ struct App {
     redraw: bool,
     #[cfg(feature = "wifi")]
     wifi: wireless::Provisioning,
-    /// Whether a record was handed to the network task and no result arrived yet.
+    /// Coordinates pending-record uploads with the network task.
     #[cfg(feature = "wifi")]
-    sync_in_flight: bool,
+    record_sync: mainichikatarenshu::supabase::RecordSync,
 }
 
 impl App {
@@ -334,6 +339,8 @@ impl App {
 
     fn set_clock(&mut self, rtc_micros: u64) {
         self.rtc.set_current_time_us(rtc_micros);
+        #[cfg(feature = "wifi")]
+        wireless::set_wall_clock(clock::unix_secs_from_rtc_micros(rtc_micros));
         self.time_valid = true;
         self.last_second = None;
         self.redraw = true;
@@ -474,14 +481,18 @@ impl App {
         if !self.wifi.is_available() {
             return;
         }
-        if let Ok(Some(credentials)) =
-            block_on(self.training.load_wifi_credentials(&mut self.scratch))
-        {
-            esp_println::println!(
-                "Loaded saved Wi-Fi credentials from flash for SSID: {}",
-                credentials.ssid
-            );
-            self.wifi.submit(credentials);
+        match block_on(self.training.load_wifi_credentials(&mut self.scratch)) {
+            Ok(Some(credentials)) => {
+                esp_println::println!(
+                    "Loaded saved Wi-Fi credentials from flash for SSID: {}",
+                    credentials.ssid
+                );
+                self.wifi.submit(credentials);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                esp_println::println!("Failed to load saved Wi-Fi credentials: {error:?}");
+            }
         }
     }
 
@@ -504,7 +515,7 @@ impl App {
 
     /// Apply results from the network task and hand it the next record to sync.
     fn poll_network(&mut self) {
-        if let Ok(unix_secs) = wireless::TIME_SYNC.try_receive() {
+        if let Some(unix_secs) = wireless::TIME_SYNC.try_take() {
             if let Some(rtc_micros) = clock::rtc_micros_from_unix_secs(unix_secs) {
                 self.set_clock(rtc_micros);
                 esp_println::println!("Clock synchronized via SNTP: {unix_secs}");
@@ -517,17 +528,21 @@ impl App {
             }
         }
         if let Ok(outcome) = wireless::RECORD_SYNC_RESULT.try_receive() {
-            self.sync_in_flight = false;
-            if let wireless::SyncOutcome::Synced(date) = outcome {
+            if let Some(date) = self.record_sync.complete(outcome) {
                 self.acknowledge(date);
             }
         }
-        if !self.sync_in_flight && mainichikatarenshu::supabase::CONFIGURED.is_some() {
-            if let Some(oldest) = self.training.state().pending().first() {
-                self.sync_in_flight = wireless::RECORD_SYNC_REQUEST
-                    .try_send(oldest.clone())
-                    .is_ok();
-            }
+        if self
+            .record_sync
+            .dispatch_next(
+                mainichikatarenshu::supabase::CONFIGURED.is_some(),
+                self.time_valid,
+                self.training.state().pending(),
+                |record| wireless::RECORD_SYNC_REQUEST.try_send(record),
+            )
+            .is_err()
+        {
+            esp_println::println!("Record sync request queue full; retrying");
         }
     }
 }

@@ -1,5 +1,7 @@
 use std::env;
 use std::path::Path;
+#[path = "build_support/ca_config.rs"]
+mod ca_config;
 #[path = "build_support/kata_config.rs"]
 mod kata_config;
 
@@ -48,10 +50,29 @@ fn generate_supabase_config(out_dir: &Path) -> std::io::Result<()> {
     std::fs::write(out_dir.join("supabase.rs"), output)
 }
 
+/// Validate and embed the trusted TLS root CA bundle as `ca_bundle.rs`.
+fn generate_ca_bundle(out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=TLS_CA_BUNDLE");
+    let path = env::var("TLS_CA_BUNDLE").unwrap_or_else(|_| "certs/ca-roots.pem".to_owned());
+    println!("cargo:rerun-if-changed={path}");
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read TLS CA bundle '{path}': {error}"))?;
+    let mut normalized = ca_config::parse_pem_bundle(&contents)?;
+    normalized.push('\0');
+    let bytes = normalized.as_bytes();
+    let output = format!(
+        "/// Trusted root CA certificates in nul-terminated PEM format.\npub const CA_BUNDLE_PEM: &core::ffi::CStr = match core::ffi::CStr::from_bytes_with_nul(&{bytes:?}) {{\n    Ok(bundle) => bundle,\n    Err(_) => panic!(\"invalid embedded CA bundle\"),\n}};\n"
+    );
+    std::fs::write(out_dir.join("ca_bundle.rs"), output)?;
+    Ok(())
+}
+
 fn main() {
     let out_dir = env::var("OUT_DIR").expect("Cargo sets OUT_DIR");
     let out_dir = Path::new(&out_dir);
     generate_kata_list(out_dir).expect("invalid kata configuration");
     generate_supabase_config(out_dir).expect("cannot write Supabase configuration");
+    generate_ca_bundle(out_dir).expect("invalid TLS CA bundle configuration");
+    println!("cargo:rerun-if-changed=build_support/ca_config.rs");
     println!("cargo:rerun-if-changed=build_support/kata_config.rs");
 }

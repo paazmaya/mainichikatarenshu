@@ -26,10 +26,18 @@ required-features = ["firmware"]
 
 [features]
 default = []
-test-utils = [] # Feature for test utilities (disables ESP32 dependencies)
+test-utils = [
+  "dep:critical-section",
+  "critical-section/std",
+  "dep:embedded-io-async",
+  "dep:mbedtls-rs",
+  "mbedtls-rs/tls-server",
+  "dep:rand_core",
+] # Feature for host test utilities
 firmware = []
 wifi = [
   "firmware",
+  "dep:critical-section",
   "dep:embassy-executor",
   "dep:embassy-net",
   "dep:embassy-sync",
@@ -37,6 +45,9 @@ wifi = [
   "dep:embedded-io-async",
   "dep:esp-radio",
   "dep:esp-rtos",
+  "dep:mbedtls-rs",
+  "mbedtls-rs/embassy-time",
+  "dep:rand_core",
   "dep:static_cell",
 ]
 
@@ -48,6 +59,43 @@ chrono-tz = { version = "0.10", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive"] }
 sequential-storage = { version = "8", features = ["postcard"] }
 embedded-storage-async = "0.4"
+critical-section = { version = "1", optional = true }
+embedded-io-async = { version = "0.7", optional = true }
+httparse = { version = "1.10", default-features = false }
+mbedtls-rs = { version = "0.3", default-features = false, features = [
+  "tls-client",
+  "tls-core",
+  "tls-proto-tls12",
+  "tls-proto-tls13",
+  "x509-parse",
+  "pem-parse",
+  "base64",
+  "pk",
+  "alg-sha256",
+  "alg-sha512",
+  "alg-hkdf",
+  "drbg-ctr",
+  "entropy",
+  "alg-aes",
+  "alg-gcm",
+  "alg-chacha20",
+  "alg-chachapoly",
+  "alg-rsa",
+  "alg-rsa-pss",
+  "alg-ecp",
+  "alg-ecdh",
+  "alg-ecdsa",
+  "curve-secp256r1",
+  "curve-secp384r1",
+  "curve-curve25519",
+  "kex-ecdhe-ecdsa",
+  "kex-ecdhe-rsa",
+  "hook-wall-clock",
+  "use-gcc",
+  "ssl-out-content-len-4096",
+], optional = true }
+rand_core = { version = "0.10.1", default-features = false, optional = true }
+serde_json = { version = "1", default-features = false, features = ["alloc", "raw_value"] }
 md-5 = { version = "0.11", default-features = false }
 
 [target.'cfg(target_os = "none")'.dependencies]
@@ -74,7 +122,6 @@ embassy-net = { version = "0.9", features = [
 ], optional = true }
 embassy-sync = { version = "0.8", optional = true }
 embassy-time = { version = "0.5", optional = true }
-embedded-io-async = { version = "0.7", optional = true }
 esp-radio = { version = "=1.0.0-beta.1", features = [
   "esp32s3",
   "wifi",

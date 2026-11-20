@@ -34,6 +34,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install native TLS build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build libclang-dev
+
       - name: Setup Rust
         uses: esp-rs/xtensa-toolchain@ec6d36527049a7f4fb2cb0c1a644668c1bb8a2a4 # v1.7.0
         with:
@@ -55,12 +58,16 @@ jobs:
           toolchain: stable
 
       - name: Run host tests
+        env:
+          LIBCLANG_PATH: ""
         run: cargo +stable test --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu
 
       - name: Check formatting
         run: cargo fmt --all -- --check --color always
 
       - name: Run clippy on host libraries and tests
+        env:
+          LIBCLANG_PATH: ""
         run: cargo +stable clippy --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu -- -D warnings
 
       - name: Archive artifact

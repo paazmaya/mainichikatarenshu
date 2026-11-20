@@ -17,9 +17,9 @@ pub const NTP_PORT: u16 = 123;
 pub enum SntpError {
     /// The packet is shorter than 48 bytes.
     BufferTooShort,
-    /// Stratum 0: a kiss-o'-death or unsynchronized server.
+    /// Stratum 0 (Kiss-o'-Death) or Leap Indicator 3 (clock unsynchronized).
     InvalidStratum,
-    /// The transmit timestamp predates the Unix epoch.
+    /// The transmit timestamp predates [`crate::clock::MIN_VALID_UNIX_SECS`].
     InvalidTimestamp,
 }
 
@@ -47,9 +47,10 @@ pub fn parse_response(packet: &[u8]) -> Result<u64, SntpError> {
         return Err(SntpError::BufferTooShort);
     }
 
-    // Stratum 0 indicates Kiss-o'-Death (KoD) packet or invalid server
+    // Leap Indicator 3 (alarm / unsynchronized) or Stratum 0 (Kiss-o'-Death)
+    let leap_indicator = packet[0] >> 6;
     let stratum = packet[1];
-    if stratum == 0 {
+    if leap_indicator == 3 || stratum == 0 {
         return Err(SntpError::InvalidStratum);
     }
 
@@ -61,6 +62,9 @@ pub fn parse_response(packet: &[u8]) -> Result<u64, SntpError> {
     }
 
     let unix_seconds = ntp_seconds - NTP_TO_UNIX_OFFSET_SECS;
+    if crate::clock::rtc_micros_from_unix_secs(unix_seconds).is_none() {
+        return Err(SntpError::InvalidTimestamp);
+    }
     Ok(unix_seconds)
 }
 
@@ -106,10 +110,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_timestamp_before_unix_epoch() {
+    fn rejects_timestamp_before_unix_epoch_or_year_2000_or_unsynced_leap() {
         let mut packet = [0u8; 48];
         packet[1] = 1;
         packet[40..44].copy_from_slice(&1000u32.to_be_bytes()); // Way before 1970
         assert_eq!(parse_response(&packet), Err(SntpError::InvalidTimestamp));
+
+        // 1999-12-31T23:59:59Z (before MIN_VALID_UNIX_SECS = 2000-01-01)
+        let ntp_1999 = (crate::clock::MIN_VALID_UNIX_SECS - 1 + NTP_TO_UNIX_OFFSET_SECS) as u32;
+        packet[40..44].copy_from_slice(&ntp_1999.to_be_bytes());
+        assert_eq!(parse_response(&packet), Err(SntpError::InvalidTimestamp));
+
+        // Leap Indicator 3 (alarm condition: clock not synchronized)
+        packet[0] = 0xE4; // LI = 3, VN = 4, Mode = 4
+        let valid_ntp = (1_795_168_800u64 + NTP_TO_UNIX_OFFSET_SECS) as u32;
+        packet[40..44].copy_from_slice(&valid_ntp.to_be_bytes());
+        assert_eq!(parse_response(&packet), Err(SntpError::InvalidStratum));
     }
 }

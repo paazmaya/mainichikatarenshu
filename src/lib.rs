@@ -23,6 +23,8 @@ pub mod sntp;
 pub mod storage;
 pub mod supabase;
 pub mod text;
+#[cfg(any(feature = "wifi", feature = "test-utils"))]
+pub mod tls;
 pub mod training;
 
 /// Kata names validated and embedded from the optional `kata.yaml` at build time.

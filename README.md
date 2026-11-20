@@ -15,20 +15,32 @@ E-ink display showing a kata for each day, along with current electricity price,
 The firmware targets `xtensa-esp32s3-none-elf` using `esp-hal` rather than
 ESP-IDF. It connects the display, the five buttons, the serial console, the
 Helsinki schedule and the flash-backed training queue. The optional `wifi`
-feature adds a station-mode Wi-Fi stack with SNTP time synchronization,
-hourly electricity price retrieval and Supabase record upload.
+feature adds a station-mode Wi-Fi stack with SNTP time synchronization and
+authenticated HTTPS (TLS 1.2/1.3 via `mbedtls-rs`) for 15-minute spot
+electricity price retrieval and Supabase record upload.
 
 Known limitations:
 
-- The electricity price API and Supabase only accept HTTPS, but the firmware
-  has no TLS client yet. Their plain-HTTP requests are redirected or refused,
-  so prices are not shown and records are not uploaded in practice.
+- **SNTP time is unauthenticated:** TLS certificate validity dates (`notBefore` /
+  `notAfter`) are enforced and fail closed when no clock is set, but initial
+  network time comes from unauthenticated UDP SNTP (unless set over UART with
+  `TIME`). An active network attacker able to spoof NTP responses could shift
+  the clock (`>= 2000-01-01`) to replay an expired certificate.
+- **Embedded CA rotation requires reflashing:** Trusted root CAs are compiled
+  into the firmware image from `certs/ca-roots.pem` (or `TLS_CA_BUNDLE`);
+  updating trust anchors requires rebuilding and flashing the device.
+- **At-least-once cloud delivery:** A pending record is acknowledged locally
+  only after a complete `2xx` response is received. If Supabase commits an
+  insert and the connection drops before the response arrives, the firmware
+  retries the same record; add a `UNIQUE (date)` constraint on the Supabase
+  table if duplicate rows must be prevented.
 - Only the CONF button changes the workflow; MENU and EXIT refresh the display
   and UP/DOWN are only logged.
 - Resting before 07:00 pauses the main loop for up to 60 seconds after a
   redraw; the chip does not enter deep sleep.
-- Host tests cover the logic modules, but no path has been exercised on real
-  hardware or a real access point.
+- Host tests (including local TLS handshake fixtures) and linked ESP32-S3
+  release builds pass, but no path has yet been exercised on a physical
+  CrowPanel or a live access point.
 
 The existing `kata.yaml` maps categories to a kata name. A category may also
 contain a list of names:
@@ -48,21 +60,28 @@ are embedded. Rebuild after changing the file. Set `KATA_CONFIG` to a
 different YAML file path when building with an alternate list. If explicitly
 set, that file must exist.
 
-The optional `wifi` feature uses `esp-radio`, `esp-rtos` and `embassy-net`,
-including Espressif's precompiled radio libraries; the firmware is **not**
-pure Rust throughout.
+The optional `wifi` feature uses `esp-radio`, `esp-rtos`, `embassy-net` and
+`mbedtls-rs` (MbedTLS 3.x compiled from C), including Espressif's precompiled
+radio libraries; the firmware is **not** pure Rust throughout.
 The bare-metal HAL still calls functions in the chip's existing ROM, and
 `espflash` uses a bootloader; this is not a claim that the entire device
 boot chain consists of Rust source.
 
-Build the experimental firmware after installing the ESP Xtensa toolchain and
-adding its GCC tools to `PATH`:
+Build the experimental firmware after installing the ESP Xtensa toolchain
+(`xtensa-esp32s3-elf-gcc` on `PATH` and `LIBCLANG_PATH` pointing to
+`esp-clang/lib`). Building with `--features wifi` (or host `--features test-utils`)
+also requires `cmake` (>= 3.19) and `ninja` to compile MbedTLS:
 
 ```sh
 cargo +esp build --release --features firmware
-# Include the optional station-mode Wi-Fi stack:
+# Include the optional station-mode Wi-Fi + HTTPS stack:
 cargo +esp build --release --features wifi
 ```
+
+Linked release footprints on `xtensa-esp32s3-none-elf`:
+- `firmware` (offline): ~170 KiB loadable flash, 64 KiB heap (`esp_alloc`).
+- `wifi` (Wi-Fi + Embassy + MbedTLS 1.2/1.3 + root CAs): ~825 KiB loadable
+  flash inside the 4 MiB `factory` partition, 160 KiB heap.
 
 ### Experimental Wi-Fi setup
 
@@ -85,13 +104,39 @@ Restart to change credentials or retry a radio initialization failure.
 
 Once connected, the firmware:
 
-- sets the clock from `pool.ntp.org` (falling back to `time.cloudflare.com`),
-  retrying every minute until one query succeeds;
-- requests the price of the current Helsinki-local hour from
-  [porssisahko.net](https://porssisahko.net/api) once per hour, retrying failures every minute (see the TLS
-  limitation above);
-- uploads the oldest pending record to Supabase when configured, and
-  acknowledges it locally only after a 2xx response.
+- sets the clock from `pool.ntp.org` (falling back to `time.cloudflare.com`)
+  unless a valid clock is already set via `TIME` or preserved across deep sleep,
+  retrying failed queries every minute;
+- requests the 15-minute spot price for the current UTC timestamp (`GET /v2/price.json?date=YYYY-MM-DDTHH:MM:SS.000Z`)
+  from [porssisahko.net](https://porssisahko.net/api) over HTTPS (port 443) once
+  per quarter-hour, retrying failures every minute;
+- uploads the oldest pending record to Supabase over HTTPS (port 443) when
+  configured and the clock is synchronized, backing off for 60 seconds after
+  failures and acknowledging locally only after a complete `2xx` response.
+
+HTTPS connections enforce X.509 chain validation (`AuthMode::Required`), TLS
+SNI and DNS SAN hostname matching, certificate `notBefore` / `notAfter`
+checks, hardware TRNG entropy (`RNG` + `ADC1`), 10-second TCP/DNS timeouts,
+15-second TLS exchange timeouts, and 2 KiB response limits (`Content-Length`
+and `Transfer-Encoding: chunked` are supported; unsupported transfer encodings
+and truncated messages are rejected without plaintext fallback).
+
+#### Root CA bundle and rotation
+
+Default trust anchors live in `certs/ca-roots.pem` (Google Trust Services `R1`/`R4`,
+GlobalSign Root CA, Let's Encrypt `ISRG Root X1`/`X2`, DigiCert Global Root
+`G2`/`G3`, and SSL.com ECC Root). To rotate roots or trust a private CA (for
+example a self-hosted Supabase instance), either update `certs/ca-roots.pem`
+or pass an alternate PEM file at build time:
+
+```sh
+TLS_CA_BUNDLE=/path/to/custom-roots.pem cargo +esp build --release --features wifi
+```
+
+`build.rs` validates PEM framing at compile time and strips comment lines
+before embedding the bundle.
+
+#### Supabase configuration
 
 Supabase is configured at build time. Synchronization is disabled unless both
 host and key are set:
@@ -104,8 +149,10 @@ SUPABASE_HOST=xyz.supabase.co SUPABASE_ANON_KEY=<anon key> \
 
 `SUPABASE_TABLE` defaults to `training_records`. The table receives
 `{"date": "YYYY-MM-DD", "kata": "...", "confirmed_at": "<RFC 3339>" | null}`.
-The key is embedded in the firmware image, so only use a public anon key with
-row-level security that permits inserts only.
+The key is embedded in the firmware image (and never printed in serial logs),
+so only use a public anon key with row-level security that permits inserts
+only, and define a `UNIQUE (date)` constraint if retried uploads should not
+insert duplicate dates.
 
 ### Experimental offline operation
 
@@ -162,10 +209,17 @@ existing device without first checking its flash layout and backing up its data.
 | `src/buttons.rs`                                                      | Button debouncing                                                     |
 | `src/screens.rs`                                                      | Screen selection and application screens                              |
 | `src/layout.rs`, `src/text.rs`                                        | Drawing helpers, text presets, wrapping and alignment                 |
-| `src/electricity.rs`, `src/supabase.rs`, `src/sntp.rs`, `src/http.rs` | Network protocol helpers                                              |
+| `src/tls.rs`                                                          | Authenticated MbedTLS 1.2/1.3 client and fail-closed `WallClock`      |
+| `src/electricity.rs`, `src/supabase.rs`, `src/sntp.rs`, `src/http.rs` | Spot price, Supabase sync, SNTP and HTTP/1.x framing helpers          |
 | `src/network_config.rs`                                               | Wi-Fi credential validation                                           |
+| `certs/ca-roots.pem`                                                  | Default WebPKI root CA bundle for HTTPS                               |
 | `crates/crowpanel-ssd1680`                                            | SSD1680 e-paper driver ([README](crates/crowpanel-ssd1680/README.md)) |
-| `build.rs`, `build_support/`                                          | Embeds `kata.yaml` and the Supabase configuration                     |
+| `build.rs`, `build_support/`                                          | Validates and embeds `kata.yaml`, Supabase settings and CA roots      |
+
+Unlike `crates/crowpanel-ssd1680` (which isolates hardware-neutral panel
+commands), `src/electricity.rs` is kept as an internal library module rather
+than a separate crate until a second consumer exists, because its formatting
+and 15-minute slot tracking are tailored to this firmware's display workflow.
 
 ### 🚧 Planned Features
 
@@ -601,22 +655,24 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
   - [x] Schedule-aware night sleep (07:00 Helsinki alarm)
   - [ ] GPIO button wake-up support (ext0/ext1 wakeup on CONF button)
 
-### Phase 3: Connectivity & Data Sync 📋 PLANNED
+### Phase 3: Connectivity & Data Sync 🚧 IN PROGRESS (awaiting hardware verification)
 
-- [ ] **WiFi & Time Integration**
+- [x] **WiFi & Time Integration**
   - [x] Station-mode connection via `esp-radio` and `embassy-net` (`src/wireless.rs`)
   - [x] Automatic SNTP / NTP network time synchronization (`src/sntp.rs`)
   - [x] Persistent Wi-Fi credentials in flash storage (`src/storage.rs`)
-- [ ] **Electricity Price Display**
+- [x] **Electricity Price Display**
   - [x] Price shown on the kata reminder screen (`src/screens.rs`)
-  - [x] Hourly spot price client and parser (`src/electricity.rs` & `src/wireless.rs`)
-  - [ ] TLS, required by the price API
-- [ ] **Remote Synchronization (Supabase)**
+  - [x] 15-minute spot price client and JSON parser (`src/electricity.rs` & `src/wireless.rs`)
+  - [x] Authenticated HTTPS (TLS 1.2/1.3, CA chain, SAN & date validation in `src/tls.rs`)
+- [x] **Remote Synchronization (Supabase)**
   - [x] Local training record queue (up to 32 days in flash)
   - [x] UART manual export and acknowledgement (`LIST`, `ACK`)
-  - [x] HTTP/REST client to sync training records to Supabase (`src/supabase.rs` & `src/wireless.rs`)
+  - [x] HTTPS/REST client and retry-safe sync coordinator (`src/supabase.rs` & `src/wireless.rs`)
   - [x] Automatic record acknowledgement on successful sync (`src/main.rs`)
-  - [ ] TLS, required by Supabase
+  - [x] Authenticated HTTPS (TLS 1.2/1.3, CA chain, SAN & date validation in `src/tls.rs`)
+- [ ] **Physical Device Validation**
+  - [ ] End-to-end Wi-Fi, SNTP, live HTTPS price fetch, and Supabase upload on a CrowPanel ESP32-S3
 
 ### Phase 4: Enhancements 🎯 FUTURE
 
@@ -636,9 +692,9 @@ compiling it for the device.
 
 | Location                                                             | Kind                                                        |
 | -------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `#[cfg(test)]` modules in `src/` and `crates/crowpanel-ssd1680/src/` | Unit tests                                                  |
+| `#[cfg(test)]` modules in `src/` and `crates/crowpanel-ssd1680/src/` | Unit tests (including in-memory TLS 1.2/1.3 certificate fixtures) |
 | `tests/state_storage.rs`                                             | Flash persistence with a simulated, failure-injecting flash |
-| `tests/kata_config_tests.rs`                                         | Validates the repository `kata.yaml`                        |
+| `tests/kata_config_tests.rs`                                         | Validates repository `kata.yaml` and `certs/ca-roots.pem`   |
 | Doc comments                                                         | Documentation tests                                         |
 
 Rendering tests draw into a `Display2in9` frame buffer and compare or inspect
@@ -661,17 +717,30 @@ cargo +stable tarpaulin
 
 The host triple is, for example, `x86_64-unknown-linux-gnu` or
 `aarch64-apple-darwin`; it is needed because `.cargo/config.toml` defaults to
-the ESP32-S3 target. CI runs the firmware builds and clippy for both feature
-sets, the host tests, documentation tests, formatting and clippy.
+the ESP32-S3 target (note: unset `LIBCLANG_PATH` on macOS host runs if
+`export-esp.sh` pointed it at `esp-clang`). GitHub Actions CI runs the firmware
+release builds and clippy for both feature sets, the host tests, documentation
+tests, formatting and host clippy; `cargo +stable tarpaulin` is a local check.
+
+### Repeatable hardware verification steps (when a CrowPanel and test services are available)
+
+1. **Inspect and back up flash** (`espflash read-flash`) and confirm the installed partition table matches `partitions.csv` before flashing.
+2. **Build and flash a test image** pointing `SUPABASE_HOST`, `SUPABASE_ANON_KEY` and `SUPABASE_TABLE` at a dedicated non-production Supabase table (with RLS insert-only policy and `UNIQUE (date)`), then open the UART0 monitor at 115200 baud.
+3. **Verify Wi-Fi + SNTP + HTTPS price fetch:** send `SSID <name>`, `PASSWORD <passphrase>`, `CONNECT`; confirm serial output logs `Wi-Fi IPv4: ...`, `SNTP sync success!`, and `Current electricity price: ... c/kWh`, and that the panel renders the kata and price.
+4. **Verify manual `TIME` fallback:** on a network blocking UDP port 123, reboot, send `TIME <current UTC unix seconds>`, and confirm HTTPS price retrieval still succeeds using the manual clock.
+5. **Verify Supabase upload and queue drain:** advance across a day boundary (or confirm a day and advance past 23:00 Helsinki time via `TIME`), run `LIST` to see the queued record, then confirm `Supabase sync succeeded for record ...` appears and `LIST` drops to `Pending records: 0`.
+6. **Verify failure and reconnect paths:** power-cycle the access point to confirm automatic Wi-Fi reconnection after 5s, and build a test image with `TLS_CA_BUNDLE` set to an unrelated test CA to confirm both HTTPS clients fail closed and leave pending records intact in `LIST`.
 
 ## Build System
 
-The build script (`build.rs`) generates two files in `OUT_DIR`:
+The build script (`build.rs`) generates three files in `OUT_DIR`:
 
 - `kata.rs` - the kata names from `kata.yaml` (or `KATA_CONFIG`), validated by
   `build_support/kata_config.rs`;
 - `supabase.rs` - the optional Supabase settings from `SUPABASE_HOST`,
-  `SUPABASE_ANON_KEY` and `SUPABASE_TABLE`.
+  `SUPABASE_ANON_KEY` and `SUPABASE_TABLE`;
+- `ca_bundle.rs` - the validated PEM root CA bundle from `certs/ca-roots.pem`
+  (or `TLS_CA_BUNDLE`), validated by `build_support/ca_config.rs`.
 
 ## License
 

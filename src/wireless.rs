@@ -1,14 +1,12 @@
-//! Wi-Fi station and network clients (`wifi` feature only).
+//! Wi-Fi station and authenticated HTTPS clients (`wifi` feature only).
 //!
 //! [`wifi_task`] waits for [`CREDENTIALS`], joins the network and, while
-//! connected, synchronizes the clock over SNTP, fetches the current
-//! electricity price every hour and uploads pending training records to
-//! Supabase. It talks to the main loop only through the channels below.
-//!
-//! Both HTTP clients use plain HTTP on port 80. The price API and Supabase
-//! only serve HTTPS, so those requests fail until TLS support is added.
+//! connected, synchronizes the clock over SNTP (unless already set), fetches
+//! the current 15-minute electricity price over HTTPS and uploads pending
+//! training records to Supabase over HTTPS. It talks to the main loop through
+//! the synchronization primitives below.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use core::fmt::Write as _;
 use embassy_executor::Spawner;
 use embassy_net::{
@@ -17,10 +15,14 @@ use embassy_net::{
     udp::{PacketMetadata, UdpSocket},
     Config as NetConfig, IpAddress, Ipv4Address, Runner, Stack, StackResources,
 };
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use embassy_time::{Duration, Instant, Timer};
-use embedded_io_async::Write;
-use esp_hal::peripherals::WIFI;
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
+use esp_hal::{
+    peripherals::{ADC1, RNG, WIFI},
+    rng::{Trng, TrngSource},
+};
 use esp_radio::wifi::{
     sta::StationConfig, AuthenticationMethodConfig, Config, Interface, WifiController,
 };
@@ -29,8 +31,12 @@ use mainichikatarenshu::{
     electricity, http,
     network_config::Credentials,
     sntp,
-    supabase::{self, SupabaseConfig},
+    supabase::{self, OutcomeDelivery, SupabaseConfig, SyncOutcome},
+    tls,
     training::Record,
+};
+use mbedtls_rs::{
+    sys::hook::backend::embassy::timer::EmbassyTimer, Certificate, Tls, TlsReference,
 };
 use static_cell::StaticCell;
 
@@ -38,9 +44,9 @@ type Mutex = CriticalSectionRawMutex;
 
 /// Credentials to connect with; only the first message is used.
 pub static CREDENTIALS: Channel<Mutex, Credentials, 1> = Channel::new();
-/// Unix seconds from a successful SNTP query.
-pub static TIME_SYNC: Channel<Mutex, u64, 1> = Channel::new();
-/// The formatted electricity price of the current hour.
+/// Latest Unix seconds from a successful SNTP query.
+pub static TIME_SYNC: Signal<Mutex, u64> = Signal::new();
+/// The formatted electricity price of the current 15-minute interval.
 pub static PRICE_UPDATE: Channel<Mutex, String<16>, 1> = Channel::new();
 /// The oldest pending record, to upload to Supabase.
 pub static RECORD_SYNC_REQUEST: Channel<Mutex, Record, 1> = Channel::new();
@@ -48,29 +54,58 @@ pub static RECORD_SYNC_REQUEST: Channel<Mutex, Record, 1> = Channel::new();
 pub static RECORD_SYNC_RESULT: Channel<Mutex, SyncOutcome, 1> = Channel::new();
 
 static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
+static TRNG_SOURCE: StaticCell<TrngSource<'static>> = StaticCell::new();
+static TRNG: StaticCell<Trng> = StaticCell::new();
+static TIMER: EmbassyTimer = EmbassyTimer;
+static WALL_CLOCK: tls::WallClock = tls::WallClock::new();
+static MBEDTLS_CLOCK: tls::MbedtlsClock<'static> = tls::MbedtlsClock::new(&WALL_CLOCK, &TIMER);
 
 /// Fallback NTP server (time.cloudflare.com) if DNS fails.
 const FALLBACK_NTP_SERVER: IpAddress = IpAddress::Ipv4(Ipv4Address::new(162, 159, 200, 1));
 const NTP_HOST: &str = "pool.ntp.org";
-const HTTP_PORT: u16 = 80;
-const NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
+const TLS_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(15);
 const CONNECTED_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
-/// Wait before retrying a failed SNTP query or price request.
+/// Wait before retrying a failed SNTP query, price request or record upload.
 const RETRY_DELAY: Duration = Duration::from_secs(60);
 
-/// Result of uploading one record.
-#[derive(Clone, Copy, Debug)]
-pub enum SyncOutcome {
-    /// The record for this date was stored remotely and may be acknowledged.
-    Synced(NaiveDate),
-    /// The upload failed; the record stays pending.
-    Failed,
+/// Record validated wall-clock Unix seconds for TLS certificate checks and price queries.
+pub fn set_wall_clock(unix_secs: u64) {
+    let _ = WALL_CLOCK.set_unix_secs(unix_secs, Instant::now().as_millis());
 }
 
-/// Spawn [`wifi_task`]; returns whether the radio task is running.
-pub fn start(wifi: WIFI<'static>, spawner: Spawner) -> bool {
-    match wifi_task(wifi, spawner) {
+fn wall_clock_now() -> Option<DateTime<Utc>> {
+    WALL_CLOCK.now(Instant::now().as_millis())
+}
+
+/// Enable hardware TRNG, install TLS hooks and spawn [`wifi_task`].
+pub fn start(
+    wifi: WIFI<'static>,
+    rng: RNG<'static>,
+    adc1: ADC1<'static>,
+    spawner: Spawner,
+) -> bool {
+    TRNG_SOURCE.init(TrngSource::new(rng, adc1));
+    let trng = match Trng::try_new() {
+        Ok(trng) => TRNG.init(trng),
+        Err(error) => {
+            esp_println::println!("Hardware TRNG initialization failed: {error:?}");
+            return false;
+        }
+    };
+    // SAFETY: `TIMER` and `MBEDTLS_CLOCK` are `'static` and installed once before any TLS/X.509 call.
+    unsafe {
+        tls::install_hooks(&TIMER, &MBEDTLS_CLOCK);
+    }
+    let tls = match Tls::new(trng) {
+        Ok(tls) => tls,
+        Err(error) => {
+            esp_println::println!("TLS initialization failed: {error:?}");
+            return false;
+        }
+    };
+    match wifi_task(wifi, tls, spawner) {
         Ok(task) => {
             spawner.spawn(task);
             true
@@ -167,7 +202,14 @@ impl Provisioning {
 
 /// Connect with the first received credentials and keep reconnecting.
 #[embassy_executor::task]
-pub async fn wifi_task(wifi: WIFI<'static>, spawner: Spawner) {
+pub async fn wifi_task(wifi: WIFI<'static>, tls: Tls<'static>, spawner: Spawner) {
+    let ca_chain = match tls::load_default_ca_bundle() {
+        Ok(chain) => chain,
+        Err(error) => {
+            esp_println::println!("Failed to load TLS CA bundle: {error:?}; restart to retry");
+            return;
+        }
+    };
     let credentials = CREDENTIALS.receive().await;
     let Some(mut controller) = configure_station(wifi, &credentials) else {
         return;
@@ -181,7 +223,9 @@ pub async fn wifi_task(wifi: WIFI<'static>, spawner: Spawner) {
         match controller.connect_async().await {
             Ok(_) => {
                 esp_println::println!("Wi-Fi associated; waiting for DHCP");
-                session.run(&controller, stack).await;
+                session
+                    .run(&controller, stack, tls.reference(), &ca_chain)
+                    .await;
                 esp_println::println!("Wi-Fi disconnected");
             }
             Err(error) => esp_println::println!("Wi-Fi connection failed: {error:?}"),
@@ -257,30 +301,21 @@ async fn network_task(mut runner: Runner<'static, Interface>) {
     runner.run().await;
 }
 
-/// Wall-clock time derived from an SNTP result and the monotonic timer.
-#[derive(Clone, Copy)]
-struct SyncedClock {
-    unix_secs: u64,
-    at: Instant,
-}
-
-impl SyncedClock {
-    fn now(self) -> Option<DateTime<Utc>> {
-        let secs = self.unix_secs + self.at.elapsed().as_secs();
-        DateTime::from_timestamp(i64::try_from(secs).ok()?, 0)
-    }
-}
-
 /// Network state kept across reconnections.
 #[derive(Default)]
 struct Session {
-    clock: Option<SyncedClock>,
+    /// Whether SNTP has synchronized the clock during this boot.
+    sntp_synced: bool,
     /// Earliest time to retry a failed SNTP query.
     clock_retry_at: Option<Instant>,
-    /// The last successfully fetched price path; a new path means a new hour.
-    last_price_path: Option<String<48>>,
+    /// Tracks price updates successfully delivered to the main loop.
+    prices: electricity::PriceUpdates,
     /// Earliest time to retry a failed price request.
     price_retry_at: Option<Instant>,
+    /// Retains any record sync outcome whose channel was temporarily full.
+    sync_outcomes: OutcomeDelivery,
+    /// Earliest time to retry a failed Supabase record upload.
+    sync_retry_at: Option<Instant>,
 }
 
 /// Whether a retry scheduled for `retry_at` may run now.
@@ -290,7 +325,13 @@ fn is_due(retry_at: Option<Instant>) -> bool {
 
 impl Session {
     /// Serve network work until the station disconnects.
-    async fn run(&mut self, controller: &WifiController<'static>, stack: Stack<'static>) {
+    async fn run(
+        &mut self,
+        controller: &WifiController<'static>,
+        stack: Stack<'static>,
+        tls: TlsReference<'_>,
+        ca_chain: &Certificate<'_>,
+    ) {
         let mut last_address = None;
         while controller.is_connected() {
             let address = stack.config_v4().map(|config| config.address);
@@ -302,11 +343,11 @@ impl Session {
                 last_address = address;
             }
             if address.is_some() {
-                if self.clock.is_none() && is_due(self.clock_retry_at) {
+                if !self.sntp_synced && wall_clock_now().is_none() && is_due(self.clock_retry_at) {
                     self.sync_clock(stack).await;
                 }
-                self.refresh_price(stack).await;
-                sync_pending_record(stack).await;
+                self.refresh_price(stack, tls, ca_chain).await;
+                self.sync_pending_record(stack, tls, ca_chain).await;
             }
             Timer::after(CONNECTED_POLL_INTERVAL).await;
         }
@@ -315,87 +356,162 @@ impl Session {
     async fn sync_clock(&mut self, stack: Stack<'static>) {
         match query_sntp(stack).await {
             Some(unix_secs) => {
-                self.clock = Some(SyncedClock {
-                    unix_secs,
-                    at: Instant::now(),
-                });
-                let _ = TIME_SYNC.try_send(unix_secs);
+                set_wall_clock(unix_secs);
+                TIME_SYNC.signal(unix_secs);
+                self.sntp_synced = true;
+                self.clock_retry_at = None;
             }
             None => self.clock_retry_at = Some(Instant::now() + RETRY_DELAY),
         }
     }
 
-    /// Fetch the price once per Helsinki-local hour, once the time is known.
-    async fn refresh_price(&mut self, stack: Stack<'static>) {
-        let Some(now) = self.clock.and_then(SyncedClock::now) else {
+    /// Fetch the price once per 15-minute UTC slot, once a valid clock is available.
+    async fn refresh_price(
+        &mut self,
+        stack: Stack<'static>,
+        tls: TlsReference<'_>,
+        ca_chain: &Certificate<'_>,
+    ) {
+        let Some(now) = wall_clock_now() else {
             return;
         };
-        let path = electricity::price_request_path(now);
-        if self.last_price_path.as_ref() == Some(&path) || !is_due(self.price_retry_at) {
+        if !self.prices.needs_price(now) || !is_due(self.price_retry_at) {
             return;
         }
-        match fetch_electricity_price(stack, &path).await {
+        let path = electricity::price_request_path(now);
+        match fetch_electricity_price(stack, tls, ca_chain, &path).await {
             Some(price) => {
-                let _ = PRICE_UPDATE.try_send(price.format());
-                self.last_price_path = Some(path);
-                self.price_retry_at = None;
+                match self
+                    .prices
+                    .deliver(now, price, |text| PRICE_UPDATE.try_send(text))
+                {
+                    Ok(()) => self.price_retry_at = None,
+                    Err(_) => {
+                        esp_println::println!("Price update queue full; retrying");
+                        self.price_retry_at = Some(Instant::now() + RETRY_DELAY);
+                    }
+                }
             }
             None => self.price_retry_at = Some(Instant::now() + RETRY_DELAY),
         }
     }
+
+    /// Flush any undelivered sync result, then upload the next requested record over HTTPS.
+    async fn sync_pending_record(
+        &mut self,
+        stack: Stack<'static>,
+        tls: TlsReference<'_>,
+        ca_chain: &Certificate<'_>,
+    ) {
+        if self
+            .sync_outcomes
+            .flush(|outcome| RECORD_SYNC_RESULT.try_send(outcome))
+            .is_err()
+        {
+            esp_println::println!("Record sync result queue full; retrying");
+            return;
+        }
+        let Some(config) = supabase::CONFIGURED else {
+            return;
+        };
+        if wall_clock_now().is_none() || !is_due(self.sync_retry_at) {
+            return;
+        }
+        let Ok(record) = RECORD_SYNC_REQUEST.try_receive() else {
+            return;
+        };
+        let outcome = if post_record(stack, tls, ca_chain, &config, &record).await {
+            self.sync_retry_at = None;
+            SyncOutcome::Synced(record.date)
+        } else {
+            self.sync_retry_at = Some(Instant::now() + RETRY_DELAY);
+            SyncOutcome::Failed
+        };
+        self.sync_outcomes.stage(outcome);
+        if self
+            .sync_outcomes
+            .flush(|result| RECORD_SYNC_RESULT.try_send(result))
+            .is_err()
+        {
+            esp_println::println!("Record sync result queue full; retrying");
+        }
+    }
 }
 
-/// Resolve `host` to its first IPv4 address.
+/// Resolve `host` to its first IPv4 address within [`NETWORK_TIMEOUT`].
 async fn resolve_host(stack: Stack<'static>, host: &str) -> Option<IpAddress> {
-    match stack.dns_query(host, DnsQueryType::A).await {
-        Ok(addresses) => {
+    match with_timeout(NETWORK_TIMEOUT, stack.dns_query(host, DnsQueryType::A)).await {
+        Ok(Ok(addresses)) => {
             let address = addresses.into_iter().next();
             if address.is_none() {
                 esp_println::println!("No address found for {host}");
             }
             address
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             esp_println::println!("DNS lookup failed for {host}: {error:?}");
+            None
+        }
+        Err(_) => {
+            esp_println::println!("DNS lookup timed out for {host}");
             None
         }
     }
 }
 
-/// Send `request` to `host` over plain HTTP and read the reply into `response`.
-///
-/// Returns the reply as text, truncated to the buffer size.
-async fn http_exchange<'r>(
+/// Send `request` to `host` over authenticated HTTPS on port 443 and validate the response.
+async fn https_exchange<'r>(
     stack: Stack<'static>,
+    tls: TlsReference<'_>,
+    ca_chain: &Certificate<'_>,
     host: &str,
     request: &[u8],
     response: &'r mut [u8],
-) -> Option<&'r str> {
+) -> Option<http::Response<'r>> {
+    if wall_clock_now().is_none() {
+        esp_println::println!("Refusing HTTPS to {host}: wall clock is not synchronized");
+        return None;
+    }
     let address = resolve_host(stack, host).await?;
-    let mut rx_buffer = [0u8; 1024];
-    let mut tx_buffer = [0u8; 1024];
+    let mut rx_buffer = [0u8; 2048];
+    let mut tx_buffer = [0u8; 2048];
     let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
     socket.set_timeout(Some(NETWORK_TIMEOUT));
-    if let Err(error) = socket.connect((address, HTTP_PORT)).await {
-        esp_println::println!("Failed to connect to {host}: {error:?}");
-        return None;
-    }
-    if let Err(error) = socket.write_all(request).await {
-        esp_println::println!("Failed to send request to {host}: {error:?}");
-        return None;
-    }
-    let mut length = 0;
-    while length < response.len() {
-        match socket.read(&mut response[length..]).await {
-            Ok(0) | Err(_) => break,
-            Ok(read) => length += read,
+    match with_timeout(NETWORK_TIMEOUT, socket.connect((address, tls::HTTPS_PORT))).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            esp_println::println!("Failed to connect to {host}: {error:?}");
+            return None;
+        }
+        Err(_) => {
+            esp_println::println!("TCP connection to {host} timed out");
+            return None;
         }
     }
-    let text = core::str::from_utf8(&response[..length]).ok();
-    if text.is_none() {
-        esp_println::println!("Response from {host} is not UTF-8");
+    match with_timeout(
+        TLS_EXCHANGE_TIMEOUT,
+        tls::https_exchange(
+            tls,
+            ca_chain,
+            wall_clock_now().is_some(),
+            &mut socket,
+            host,
+            request,
+            response,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(reply)) => Some(reply),
+        Ok(Err(error)) => {
+            esp_println::println!("HTTPS exchange with {host} failed: {error:?}");
+            None
+        }
+        Err(_) => {
+            esp_println::println!("HTTPS exchange with {host} timed out");
+            None
+        }
     }
-    text
 }
 
 /// Query an SNTP server; returns Unix seconds.
@@ -455,8 +571,13 @@ async fn query_sntp(stack: Stack<'static>) -> Option<u64> {
     }
 }
 
-/// Fetch the price at `path` from the price API.
-async fn fetch_electricity_price(stack: Stack<'static>, path: &str) -> Option<electricity::Price> {
+/// Fetch the price at `path` from the price API over HTTPS.
+async fn fetch_electricity_price(
+    stack: Stack<'static>,
+    tls: TlsReference<'_>,
+    ca_chain: &Certificate<'_>,
+    path: &str,
+) -> Option<electricity::Price> {
     esp_println::println!("Fetching electricity spot price...");
     let mut request: String<160> = String::new();
     // A 48-byte path plus fixed headers always fits.
@@ -465,19 +586,28 @@ async fn fetch_electricity_price(stack: Stack<'static>, path: &str) -> Option<el
         "GET {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
         electricity::PRICE_API_HOST
     );
-    let mut response = [0u8; 1024];
-    let reply = http_exchange(
+    let mut response = [0u8; 2048];
+    let reply = https_exchange(
         stack,
+        tls,
+        ca_chain,
         electricity::PRICE_API_HOST,
         request.as_bytes(),
         &mut response,
     )
     .await?;
-    if !http::is_success(reply) {
-        esp_println::println!("Price API returned status {:?}", http::status_code(reply));
+    if !reply.is_success() {
+        esp_println::println!("Price API returned status {}", reply.status);
         return None;
     }
-    let price = electricity::parse_price_response(reply);
+    let body = match core::str::from_utf8(reply.body) {
+        Ok(body) => body,
+        Err(error) => {
+            esp_println::println!("Price API response is not UTF-8: {error}");
+            return None;
+        }
+    };
+    let price = electricity::parse_price_response(body);
     match price {
         Some(price) => esp_println::println!("Current electricity price: {}", price.format()),
         None => esp_println::println!("No price parsed from API response"),
@@ -485,25 +615,11 @@ async fn fetch_electricity_price(stack: Stack<'static>, path: &str) -> Option<el
     price
 }
 
-/// Upload the requested record, if any, and report the outcome.
-async fn sync_pending_record(stack: Stack<'static>) {
-    let Some(config) = supabase::CONFIGURED else {
-        return;
-    };
-    let Ok(record) = RECORD_SYNC_REQUEST.try_receive() else {
-        return;
-    };
-    let outcome = if post_record(stack, &config, &record).await {
-        SyncOutcome::Synced(record.date)
-    } else {
-        SyncOutcome::Failed
-    };
-    let _ = RECORD_SYNC_RESULT.try_send(outcome);
-}
-
-/// Insert `record` into the Supabase table; returns whether it succeeded.
+/// Insert `record` into the Supabase table over HTTPS; returns whether it succeeded.
 async fn post_record(
     stack: Stack<'static>,
+    tls: TlsReference<'_>,
+    ca_chain: &Certificate<'_>,
     config: &SupabaseConfig<'static>,
     record: &Record,
 ) -> bool {
@@ -520,19 +636,24 @@ async fn post_record(
             return false;
         }
     };
-    let mut response = [0u8; 512];
-    let Some(reply) = http_exchange(stack, config.host, request.as_bytes(), &mut response).await
+    let mut response = [0u8; 2048];
+    let Some(reply) = https_exchange(
+        stack,
+        tls,
+        ca_chain,
+        config.host,
+        request.as_bytes(),
+        &mut response,
+    )
+    .await
     else {
         return false;
     };
-    if http::is_success(reply) {
+    if reply.is_success() {
         esp_println::println!("Supabase sync succeeded for record {}", record.date);
         true
     } else {
-        esp_println::println!(
-            "Supabase sync failed with status {:?}",
-            http::status_code(reply)
-        );
+        esp_println::println!("Supabase sync failed with status {}", reply.status);
         false
     }
 }
