@@ -18,6 +18,12 @@ use static_cell::StaticCell;
 pub static CREDENTIALS: Channel<CriticalSectionRawMutex, Credentials, 1> = Channel::new();
 pub static TIME_SYNC: Channel<CriticalSectionRawMutex, u64, 1> = Channel::new();
 pub static PRICE_UPDATE: Channel<CriticalSectionRawMutex, heapless::String<16>, 1> = Channel::new();
+pub static RECORD_SYNC_REQUEST: Channel<
+    CriticalSectionRawMutex,
+    mainichikatarenshu::training::Record,
+    1,
+> = Channel::new();
+pub static RECORD_SYNCED: Channel<CriticalSectionRawMutex, chrono::NaiveDate, 1> = Channel::new();
 static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
 
 #[embassy_executor::task]
@@ -96,6 +102,11 @@ pub async fn wifi_task(wifi: WIFI<'static>, spawner: Spawner) {
                             None => esp_println::println!("Wi-Fi IPv4 lease lost"),
                         }
                         last_address = address;
+                    }
+                    if let Ok(record) = RECORD_SYNC_REQUEST.try_receive() {
+                        if sync_record_to_supabase(stack, &record).await {
+                            let _ = RECORD_SYNCED.try_send(record.date);
+                        }
                     }
                     Timer::after(Duration::from_secs(2)).await;
                 }
@@ -235,6 +246,85 @@ async fn fetch_electricity_price(stack: Stack<'static>) -> Option<heapless::Stri
 
     esp_println::println!("No price parsed from API response");
     None
+}
+
+async fn sync_record_to_supabase(
+    stack: Stack<'static>,
+    record: &mainichikatarenshu::training::Record,
+) -> bool {
+    use mainichikatarenshu::supabase::{
+        format_post_request, format_record_json, is_http_success, SupabaseConfig,
+    };
+
+    esp_println::println!(
+        "Syncing training record to Supabase for date {}...",
+        record.date
+    );
+
+    // Default Supabase project host / endpoint (can be configured or point to project instance)
+    let host = "mainichi-kata.supabase.co";
+    let server_ip = match stack
+        .dns_query(host, embassy_net::dns::DnsQueryType::A)
+        .await
+    {
+        Ok(addrs) => match addrs.into_iter().next() {
+            Some(ip) => ip,
+            None => {
+                esp_println::println!("Could not resolve Supabase host");
+                return false;
+            }
+        },
+        Err(e) => {
+            esp_println::println!("DNS lookup failed for Supabase: {e:?}");
+            return false;
+        }
+    };
+
+    let mut rx_buf = [0u8; 1024];
+    let mut tx_buf = [0u8; 1024];
+    let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
+    socket.set_timeout(Some(Duration::from_secs(5)));
+
+    if let Err(e) = socket.connect((server_ip, 80)).await {
+        esp_println::println!("Failed to connect to Supabase: {e:?}");
+        return false;
+    }
+
+    let config = SupabaseConfig::new(host, "anon-public-key", "training_records");
+    let payload = format_record_json(record);
+    let request = format_post_request(&config, &payload);
+
+    use embedded_io_async::Write;
+    if let Err(e) = socket.write_all(request.as_bytes()).await {
+        esp_println::println!("Failed to write Supabase POST request: {e:?}");
+        return false;
+    }
+
+    let mut response_buf = [0u8; 512];
+    let mut total_read = 0;
+    use embedded_io_async::Read;
+    loop {
+        match socket.read(&mut response_buf[total_read..]).await {
+            Ok(0) => break,
+            Ok(n) => {
+                total_read += n;
+                if total_read >= response_buf.len() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if let Ok(response_str) = core::str::from_utf8(&response_buf[..total_read]) {
+        if is_http_success(response_str) {
+            esp_println::println!("Supabase sync succeeded for record {}", record.date);
+            return true;
+        }
+    }
+
+    esp_println::println!("Supabase sync request did not return success");
+    false
 }
 
 #[embassy_executor::task]

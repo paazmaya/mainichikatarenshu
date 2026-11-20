@@ -327,6 +327,26 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
             }
         }
 
+        #[cfg(feature = "wifi")]
+        if let Ok(synced_date) = wireless::RECORD_SYNCED.try_receive() {
+            match block_on(training.acknowledge(&mut scratch, synced_date)) {
+                Ok(ack_record) => {
+                    esp_println::println!(
+                        "Record automatically acknowledged after Supabase sync: {}",
+                        ack_record.date
+                    );
+                }
+                Err(e) => {
+                    esp_println::println!("Failed to auto-ack synced record: {e:?}");
+                }
+            }
+        }
+
+        #[cfg(feature = "wifi")]
+        if let Some(oldest_pending) = training.state().pending().first() {
+            let _ = wireless::RECORD_SYNC_REQUEST.try_send(oldest_pending.clone());
+        }
+
         let millis = rtc.time_since_power_up().as_millis();
         let event = button
             .sample(input.is_high(), millis)

@@ -805,7 +805,7 @@ The project continues toward its goal: a daily kata reminder that combines tradi
 - **November 8, 2025, 9:02 AM** - Refactoring finished, driver cleaned up
 - **March 7, 2026, 12:36 AM** - Great refactoring completed with modular architecture
 - **November 6, 2026** - Migration from ESP-IDF to `esp-hal` bare-metal with Embassy networking and atomic flash storage
-- **November 20, 2026** - Automated SNTP network time sync, persistent Wi-Fi flash provisioning, spot electricity price retrieval, schedule-aware sleep, and e-paper display sleep power management
+- **November 20, 2026** - Automated SNTP network time sync, persistent Wi-Fi flash provisioning, spot electricity price retrieval, Supabase cloud sync, schedule-aware sleep, and e-paper display sleep power management
 
 Total development time for driver: ~2 hours of focused debugging  
 Total refactoring time: ~4 hours of systematic improvement  

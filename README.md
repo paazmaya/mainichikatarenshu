@@ -577,8 +577,8 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 - [ ] **Remote Synchronization (Supabase)**
   - [x] Local training record queue (up to 32 days in flash)
   - [x] UART manual export and acknowledgement (`LIST`, `ACK`)
-  - [ ] HTTP/REST client to sync training records to Supabase
-  - [ ] Automatic record acknowledgement on successful sync
+  - [x] HTTP/REST client to sync training records to Supabase (`src/supabase.rs` & `src/wireless.rs`)
+  - [x] Automatic record acknowledgement on successful sync (`src/main.rs`)
 
 ### Phase 4: Enhancements 🎯 FUTURE
 

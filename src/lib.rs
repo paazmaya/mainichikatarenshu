@@ -20,6 +20,7 @@ pub mod schedule;
 pub mod sntp;
 pub mod ssd1680;
 pub mod storage;
+pub mod supabase;
 pub mod training;
 pub mod wpa2;
 
