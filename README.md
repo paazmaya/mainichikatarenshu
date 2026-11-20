@@ -554,12 +554,12 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 - [x] **Partition Validation & Flash Persistence**
   - [x] Partition table structure and checksum validation (`src/partitions.rs`)
   - [x] Sequential flash snapshots with postcard serialization (`src/storage.rs`)
-- [ ] **Button Input Handling**
+- [x] **Button Input Handling**
   - [x] Monotonic debouncer for active-low buttons (`src/buttons.rs`)
   - [x] CONF button (GPIO5) confirm training
-  - [ ] MENU button (IO2) - Navigate/menu
-  - [ ] EXIT button (IO1) - Cancel/wake
-  - [ ] Rotary switch (IO4/IO6/IO5) - Selection
+  - [x] MENU button (IO2) input handling
+  - [x] EXIT button (IO1) input handling
+  - [x] Rotary switch Down (IO4) and Up (IO6) inputs (`ButtonBank`)
 - [ ] **Power Management & Low Power**
   - [x] SSD1680 display deep sleep command (`sleep()`)
   - [x] Schedule-aware night sleep (07:00 Helsinki alarm)

@@ -22,7 +22,7 @@ use esp_hal::{
 use esp_storage::FlashStorage;
 use heapless::String;
 use mainichikatarenshu::{
-    buttons::{Debouncer, Event},
+    buttons::{ButtonBank, ButtonId, Event},
     kata::KATA,
     kata_display::KataDisplayManager,
     partitions::training_partition,
@@ -139,11 +139,27 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let rtc = Rtc::new(peripherals.RTC_TIMER);
     let mut time_valid = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep)
         && rtc.current_time_us() / 1_000_000 >= 946_684_800;
-    let input = Input::new(
+    let btn_conf = Input::new(
         peripherals.GPIO5,
         InputConfig::default().with_pull(Pull::Up),
     );
-    let mut button = Debouncer::new(50, rtc.time_since_power_up().as_millis());
+    let btn_menu = Input::new(
+        peripherals.GPIO2,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let btn_exit = Input::new(
+        peripherals.GPIO1,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let btn_down = Input::new(
+        peripherals.GPIO4,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let btn_up = Input::new(
+        peripherals.GPIO6,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let mut buttons = ButtonBank::new(50, rtc.time_since_power_up().as_millis());
     let mut command: String<96> = String::new();
     #[cfg(feature = "wifi")]
     let mut wifi_ssid: String<32> = String::new();
@@ -348,9 +364,37 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
         }
 
         let millis = rtc.time_since_power_up().as_millis();
-        let event = button
-            .sample(input.is_high(), millis)
+        let event_conf = buttons
+            .sample(ButtonId::Confirm, btn_conf.is_high(), millis)
             .expect("Monotonic clock moved backwards");
+        let event_menu = buttons
+            .sample(ButtonId::Menu, btn_menu.is_high(), millis)
+            .expect("Monotonic clock moved backwards");
+        let event_exit = buttons
+            .sample(ButtonId::Exit, btn_exit.is_high(), millis)
+            .expect("Monotonic clock moved backwards");
+        let event_down = buttons
+            .sample(ButtonId::Down, btn_down.is_high(), millis)
+            .expect("Monotonic clock moved backwards");
+        let event_up = buttons
+            .sample(ButtonId::Up, btn_up.is_high(), millis)
+            .expect("Monotonic clock moved backwards");
+
+        if event_menu == Some(Event::Pressed) {
+            esp_println::println!("MENU button pressed");
+            redraw = true;
+        }
+        if event_exit == Some(Event::Pressed) {
+            esp_println::println!("EXIT button pressed");
+            redraw = true;
+        }
+        if event_down == Some(Event::Pressed) {
+            esp_println::println!("DOWN button pressed");
+        }
+        if event_up == Some(Event::Pressed) {
+            esp_println::println!("UP button pressed");
+        }
+
         if time_valid {
             let seconds = rtc.current_time_us() / 1_000_000;
             let now = DateTime::<Utc>::from_timestamp(
@@ -389,7 +433,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                 }
                 last_second = Some(seconds);
             }
-            if event == Some(Event::Pressed) && training_error.is_none() {
+            if event_conf == Some(Event::Pressed) && training_error.is_none() {
                 match block_on(training.confirm(&mut scratch, now)) {
                     Ok(Change::Confirmed) => redraw = true,
                     Ok(_) => {}

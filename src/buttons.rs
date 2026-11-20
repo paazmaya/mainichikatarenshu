@@ -69,6 +69,44 @@ impl Debouncer {
     }
 }
 
+/// A bank of buttons debounced with a common monotonic millisecond clock.
+#[derive(Clone, Copy, Debug)]
+pub struct ButtonBank {
+    confirm: Debouncer,
+    menu: Debouncer,
+    exit: Debouncer,
+    down: Debouncer,
+    up: Debouncer,
+}
+
+impl ButtonBank {
+    pub fn new(debounce_ms: u64, now: u64) -> Self {
+        Self {
+            confirm: Debouncer::new(debounce_ms, now),
+            menu: Debouncer::new(debounce_ms, now),
+            exit: Debouncer::new(debounce_ms, now),
+            down: Debouncer::new(debounce_ms, now),
+            up: Debouncer::new(debounce_ms, now),
+        }
+    }
+
+    /// Sample a button by ID; `high == false` means pressed.
+    pub fn sample(
+        &mut self,
+        id: ButtonId,
+        high: bool,
+        now: u64,
+    ) -> Result<Option<Event>, ClockWentBackwards> {
+        match id {
+            ButtonId::Confirm => self.confirm.sample(high, now),
+            ButtonId::Menu => self.menu.sample(high, now),
+            ButtonId::Exit => self.exit.sample(high, now),
+            ButtonId::Down => self.down.sample(high, now),
+            ButtonId::Up => self.up.sample(high, now),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +131,21 @@ mod tests {
         assert_eq!(button.sample(false, 20), Ok(None));
         assert_eq!(button.sample(true, 19), Err(ClockWentBackwards));
         assert_eq!(button.sample(false, 70), Ok(Some(Event::Pressed)));
+    }
+
+    #[test]
+    fn button_bank_samples_independently() {
+        let mut bank = ButtonBank::new(50, 0);
+        assert_eq!(bank.sample(ButtonId::Confirm, false, 20), Ok(None));
+        assert_eq!(
+            bank.sample(ButtonId::Confirm, false, 80),
+            Ok(Some(Event::Pressed))
+        );
+        assert_eq!(bank.sample(ButtonId::Menu, true, 80), Ok(None));
+        assert_eq!(bank.sample(ButtonId::Menu, false, 100), Ok(None));
+        assert_eq!(
+            bank.sample(ButtonId::Menu, false, 160),
+            Ok(Some(Event::Pressed))
+        );
     }
 }
