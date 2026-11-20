@@ -6,15 +6,11 @@
 **Hardware:** CrowPanel ESP32 2.9" E-paper HMI Display (128×296, SSD1680 driver)  
 **Language:** Bare-metal Rust (`no_std`) with `esp-hal` & Embassy (previously ESP-IDF)
 
-
-
 ## Introduction: The Vision
 
 The goal was simple yet ambitious: create a daily martial arts kata reminder using an E-ink display powered by ESP32-S3, written entirely in Rust. The display would wake up at 7:00 AM, show a random kata name, and track whether the training was completed. The data would sync to Google Drive for long-term tracking.
 
 **SD Prompt:** `A minimalist e-paper display showing Japanese kanji characters for martial arts kata, mounted on a wooden desk with morning sunlight, black and white aesthetic, clean modern design, photorealistic, 4k`
-
-
 
 ## Chapter 1: The Toolchain Odyssey (October 2025)
 
@@ -51,8 +47,6 @@ runner = "espflash flash --monitor --bootloader kukkuu/build/bootloader/bootload
 
 **SD Prompt:** `A computer screen showing terminal windows with compilation logs, ESP32 development board connected via USB cable, dim workshop lighting, technical atmosphere, developer workspace, cinematic lighting, detailed electronics`
 
-
-
 ## Chapter 2: The Driver Search (October 14, 2025 - Morning)
 
 ### Existing Drivers Don't Fit
@@ -79,8 +73,6 @@ Starting from the `mbv/ssd1680` structure, I created a new driver in `src/ssd168
 The driver needed to match the Arduino implementation exactly, translating C++ patterns to idiomatic Rust.
 
 **SD Prompt:** `Split screen comparison showing Arduino C++ code on left and Rust code on right, syntax highlighting, dark theme IDE, code translation concept, technical documentation style, clean and professional`
-
-
 
 ## Chapter 3: Matching the Working Implementation (October 14, 2025 - Late Morning)
 
@@ -123,8 +115,6 @@ pub fn fast_update(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayErr
 ```
 
 **SD Prompt:** `Close-up of e-paper display showing partial refresh in progress, ghosting effect visible, black and white pixels transitioning, macro photography, technical documentation style, high contrast`
-
-
 
 ## Chapter 4: The Blank Screen Mystery (October 14, 2025 - Noon)
 
@@ -173,8 +163,6 @@ I (xxxxx) mainichikatarenshu::ssd1680::interface: EPD_READBUSY: BUSY pin is now 
 ```
 
 **SD Prompt:** `Digital oscilloscope showing BUSY pin signal transitioning from HIGH to LOW, electronic measurement equipment, laboratory setting, technical precision, blue and green waveforms, professional electronics testing`
-
-
 
 ## Chapter 5: The Inverted World (October 14, 2025 - Afternoon)
 
@@ -235,8 +223,6 @@ This affects `embedded-graphics` integration:
 
 **SD Prompt:** `Yin-yang symbol made of e-paper display pixels, inverted colors concept, black and white contrast, philosophical technology fusion, minimalist art style, high contrast monochrome`
 
-
-
 ## Chapter 6: Code Archaeology (November 8, 2025 - Morning)
 
 ### Function Usage Analysis
@@ -263,8 +249,6 @@ With the driver working, I documented which functions were actually being used i
 These unused functions represent the exploration process—different approaches tried, debugging tools created, and future capabilities planned. They're documented as `**UNUSED**` but kept for debugging and future power management features.
 
 **SD Prompt:** `Archaeological dig site metaphor with layers of code, git history visualization, code evolution timeline, developer tools and artifacts, educational infographic style, clean vector graphics`
-
-
 
 ## Chapter 7: The Refactoring (November 8, 2025 - Late Morning)
 
@@ -311,8 +295,6 @@ Extracted common patterns into reusable helpers:
 Similar refactoring in `interface.rs` added 5 helper functions for pin operations and command sequences, reducing another 20 lines of repetition.
 
 **SD Prompt:** `Code refactoring visualization, before and after comparison, tangled spaghetti code transforming into clean organized modules, abstract technical illustration, blue and green color scheme, modern software engineering concept art`
-
-
 
 ## Chapter 8: The Great Refactoring (March 7, 2026)
 
@@ -570,8 +552,6 @@ stats.break_streak();           // Handle missed days
 
 **SD Prompt:** `Modular software architecture visualization, showing separate modules for text rendering, display utilities, application logic, and testing, connected by clean interfaces, professional software design diagram, blue and white color scheme`
 
-
-
 ## Technical Achievements (March 2026 Snapshot)
 
 _Historical note: the structure and roadmap below capture the project at the end of Chapter 8 (March 2026), before the bare-metal `esp-hal` migration, the `crowpanel-ssd1680` workspace crate extraction, and the November 2026 refactoring. See **Current Architecture and What's Next** near the end of this document for the present layout._
@@ -622,8 +602,6 @@ tests/
 
 **SD Prompt:** `Technical architecture diagram showing ESP32-S3 chip connected to SSD1680 e-paper display controller, SPI bus visualization, GPIO pins labeled, professional electronics schematic style, clean lines, blue and black color scheme`
 
-
-
 ## Lessons Learned
 
 ### 1. Trust the Working Code
@@ -666,8 +644,6 @@ Designing for testability isn't an afterthought—it's fundamental. Pure functio
 
 **SD Prompt:** `Open notebook with handwritten technical notes, sketches of circuit diagrams, coffee cup, mechanical keyboard, developer's desk from above, warm lighting, productive workspace aesthetic, photorealistic`
 
-
-
 ## Resources and References
 
 ### Hardware
@@ -689,8 +665,6 @@ Designing for testability isn't an afterthought—it's fundamental. Pure functio
 - [epd-waveshare](https://github.com/caemor/epd-waveshare) - Alternative E-paper drivers
 
 **SD Prompt:** `Stack of technical books and datasheets, ESP32 development board, e-paper display, electronic components scattered on workbench, maker space atmosphere, warm workshop lighting, detailed and realistic`
-
-
 
 ## What's Next (March 2026 Snapshot)
 
@@ -718,8 +692,6 @@ _Historical note: most of these goals were later reshaped and implemented in Cha
 4. **Examples** - Simple usage patterns
 
 **SD Prompt:** `Futuristic e-paper display showing Japanese kanji, weather icons, and graphs, mounted on wall, smart home integration, minimalist interior design, soft ambient lighting, technology seamlessly integrated into daily life`
-
-
 
 ## Chapter 9: Breaking Free from ESP-IDF (November 2026)
 
@@ -766,8 +738,6 @@ With `espflash` managing partition tables and flashing directly, the helper C pr
 
 **SD Prompt:** `A spacecraft jettisoning heavy booster stages to reveal a sleek, lightweight satellite, minimalism concept, cybernetic aesthetic, clean blue and silver lines, high tech digital art`
 
-
-
 ## Chapter 10: Robust Flash Persistence & Monotonic Input (November 2026)
 
 ### Partition Validation in Rust (`src/partitions.rs`)
@@ -795,8 +765,6 @@ The old button handling relied on FreeRTOS task notifications and OS threads (`s
 - Detects transitions without background polling tasks or thread allocations.
 - Rejects monotonic clock inconsistencies while remaining completely `no_std` compatible.
 
-
-
 ## Chapter 11: Thin Firmware, Testable Library (November 2026)
 
 After a burst of feature work (SNTP, saved Wi-Fi credentials, spot prices, Supabase sync, five buttons, rest pauses), `src/main.rs` had grown into a single ~470-line `application()` function. It mixed peripheral setup, UART parsing, channel polling, button handling, kata selection, flash transactions, screen choice and sleep. None of that could be tested on a host machine. A review of the whole codebase found improvements, but also bugs hiding in the noise.
@@ -814,15 +782,15 @@ After a burst of feature work (SNTP, saved Wi-Fi credentials, spot prices, Supab
 
 The SSD1680 chipset driver first moved into its own workspace crate (`crates/crowpanel-ssd1680`), separating panel command sequences and frame buffers from application rules. Then the application itself was split along one guiding rule: **if it decides something, it belongs in the library; if it touches a peripheral, it stays in the binary.**
 
-| New / reshaped module | What moved there |
-|---|---|
-| `src/clock.rs` | RTC timestamp validation; replaces three copies of the magic `946_684_800` |
-| `src/console.rs` | `LineBuffer` (byte accumulation, overflow, non-ASCII) and a `Command` parser |
-| `src/screens.rs` | Pure `select_screen()` returning a `Screen` enum, plus `draw_screen()` |
-| `src/layout.rs` | Former `DisplayManager` unit struct, now free `draw_*` functions |
-| `src/http.rs` | HTTP status parsing shared by the price and Supabase clients |
-| `training::choose_kata` | Unbiased rejection sampling over the kata list |
-| `ButtonBank::pressed` | Samples all buttons at once and returns new presses |
+| New / reshaped module   | What moved there                                                             |
+| ----------------------- | ---------------------------------------------------------------------------- |
+| `src/clock.rs`          | RTC timestamp validation; replaces three copies of the magic `946_684_800`   |
+| `src/console.rs`        | `LineBuffer` (byte accumulation, overflow, non-ASCII) and a `Command` parser |
+| `src/screens.rs`        | Pure `select_screen()` returning a `Screen` enum, plus `draw_screen()`       |
+| `src/layout.rs`         | Former `DisplayManager` unit struct, now free `draw_*` functions             |
+| `src/http.rs`           | HTTP status parsing shared by the price and Supabase clients                 |
+| `training::choose_kata` | Unbiased rejection sampling over the kata list                               |
+| `ButtonBank::pressed`   | Samples all buttons at once and returns new presses                          |
 
 `main.rs` is now a set of `init_*` functions plus an `App` struct with one small method per concern: `poll_console`, `poll_buttons`, `update_training`, `refresh_display`, `rest_pause`, and `poll_network` for `wifi` builds. Four copies of the "panic on ambiguous flash write" match collapsed into a single `check_storage` helper.
 
@@ -853,13 +821,11 @@ Supabase settings now come from `SUPABASE_HOST`, `SUPABASE_ANON_KEY` and `SUPABA
 ### Guard Rails
 
 - `#![warn(missing_docs)]` on the library, with every public item documented.
-- The `write_text` doctest, which had never compiled, now runs in CI.
-- CI runs clippy with `-D warnings` on host tests and on both firmware feature sets.
-- Local `cargo +stable tarpaulin` enforces the 90% coverage gate configured in `tarpaulin.toml`.
+- The `write_text` doctest, which had never compiled, was fixed and passes locally via `cargo +stable test --workspace --doc`.
+- To conserve CI minutes, GitHub Actions builds both firmware release feature sets (`firmware` and `wifi`), checks formatting, and runs host unit/integration tests (`--lib --tests`) and host clippy with `-D warnings`.
+- Firmware clippy (`cargo +esp clippy` on both feature sets), documentation tests (`--doc`), and `cargo +stable tarpaulin` (enforcing the 90% coverage gate configured in `tarpaulin.toml`) are run locally.
 
 **SD Prompt:** `Sculptor carving a sleek minimal statue out of a rough block of stone, chips falling away, workshop with neatly organized tools, warm light, black and white ink wash style`
-
-
 
 ## Chapter 12: Authenticated HTTPS, Quarter-Hour Prices, and Hardened Framing (November 2026)
 
@@ -878,7 +844,7 @@ Encrypting bytes is not the same as authenticating a server. On an embedded targ
 
 ### Quarter-Hour Spot Pricing (`porssisahko.net` v2) and Hardened HTTP
 
-Inspecting the live `porssisahko.net` documentation confirmed that Finland's spot market now runs on 15-minute (*varttisähkö*) intervals under **API v2** (`GET /v2/price.json?date=YYYY-MM-DDTHH:MM:SS.000Z`). Switching from `/v1/price.json` to `/v2/price.json` reports the actual current quarter-hour price in `c/kWh` (VAT included) and queries in UTC (`Z`), eliminating the repeated local-hour ambiguity during the autumn DST fallback.
+Inspecting the live `porssisahko.net` documentation confirmed that Finland's spot market now runs on 15-minute (_varttisähkö_) intervals under **API v2** (`GET /v2/price.json?date=YYYY-MM-DDTHH:MM:SS.000Z`). Switching from `/v1/price.json` to `/v2/price.json` reports the actual current quarter-hour price in `c/kWh` (VAT included) and queries in UTC (`Z`), eliminating the repeated local-hour ambiguity during the autumn DST fallback.
 
 At the protocol boundary:
 
@@ -925,8 +891,6 @@ Current verified baseline:
 3. **Remaining button actions:** Assign concrete workflows (such as manual refresh, history inspection, or status screens) to `MENU`, `EXIT`, `UP`, and `DOWN`.
 4. **Time and trust hardening:** Address SNTP's lack of cryptographic authentication (for example via NTS or monotonic lower-bound persistence in flash) and evaluate flash-stored CA bundle updates without reflashing.
 
-
-
 ## Conclusion
 
 Building a Rust driver for SSD1680 E-paper display was a journey through hardware quirks, toolchain battles, and careful code archaeology. The key was patience—both in waiting for the BUSY pin and in methodically comparing working implementations.
@@ -944,8 +908,6 @@ The project continues toward its goal: a daily kata reminder that combines tradi
 **毎日型練習して！** (Train kata every day!)
 
 **SD Prompt:** `Zen garden with modern e-paper display showing Japanese calligraphy, fusion of traditional and modern, peaceful atmosphere, black and white aesthetic, minimalist composition, inspirational technology meets tradition concept`
-
-
 
 ## Appendix: Timeline
 
@@ -966,8 +928,6 @@ Total lines of code: ~4,300 lines across 19 application modules, plus the `crowp
 Automated verification: 94 host tests + doctests (`91.92%` line coverage via `cargo tarpaulin`)
 
 **SD Prompt:** `Project timeline visualization, milestone markers, git commit graph, development progress chart, clean infographic style, professional project management aesthetic, blue and green color scheme`
-
-
 
 _This blog post documents the development journey of the [mainichikatarenshu](https://github.com/paazmaya/mainichikatarenshu) project, combining technical documentation created during development into a cohesive narrative. All code examples are from the actual implementation._
 

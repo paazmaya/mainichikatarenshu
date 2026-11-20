@@ -79,6 +79,7 @@ cargo +esp build --release --features wifi
 ```
 
 Linked release footprints on `xtensa-esp32s3-none-elf`:
+
 - `firmware` (offline): ~170 KiB loadable flash, 64 KiB heap (`esp_alloc`).
 - `wifi` (Wi-Fi + Embassy + MbedTLS 1.2/1.3 + root CAs): ~825 KiB loadable
   flash inside the 4 MiB `factory` partition, 160 KiB heap.
@@ -652,7 +653,8 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
   - [x] Rotary switch Down (IO4) and Up (IO6) inputs (`ButtonBank`)
 - [ ] **Power Management & Low Power**
   - [x] SSD1680 display deep sleep command (`sleep()`)
-  - [x] Schedule-aware night sleep (07:00 Helsinki alarm)
+  - [x] Schedule-aware night rest pause (up to 60s loop pause before 07:00 Helsinki)
+  - [ ] ESP32-S3 RTC deep sleep until 07:00 Helsinki alarm
   - [ ] GPIO button wake-up support (ext0/ext1 wakeup on CONF button)
 
 ### Phase 3: Connectivity & Data Sync 🚧 IN PROGRESS (awaiting hardware verification)
@@ -690,12 +692,12 @@ the host with the `test-utils` feature, which builds the library with `std`.
 The firmware binary only wires peripherals to that logic, so it is checked by
 compiling it for the device.
 
-| Location                                                             | Kind                                                        |
-| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Location                                                             | Kind                                                              |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `#[cfg(test)]` modules in `src/` and `crates/crowpanel-ssd1680/src/` | Unit tests (including in-memory TLS 1.2/1.3 certificate fixtures) |
-| `tests/state_storage.rs`                                             | Flash persistence with a simulated, failure-injecting flash |
-| `tests/kata_config_tests.rs`                                         | Validates repository `kata.yaml` and `certs/ca-roots.pem`   |
-| Doc comments                                                         | Documentation tests                                         |
+| `tests/state_storage.rs`                                             | Flash persistence with a simulated, failure-injecting flash       |
+| `tests/kata_config_tests.rs`                                         | Validates repository `kata.yaml` and `certs/ca-roots.pem`         |
+| Doc comments                                                         | Documentation tests                                               |
 
 Rendering tests draw into a `Display2in9` frame buffer and compare or inspect
 its bytes, so no panel is required.
@@ -717,10 +719,12 @@ cargo +stable tarpaulin
 
 The host triple is, for example, `x86_64-unknown-linux-gnu` or
 `aarch64-apple-darwin`; it is needed because `.cargo/config.toml` defaults to
-the ESP32-S3 target (note: unset `LIBCLANG_PATH` on macOS host runs if
-`export-esp.sh` pointed it at `esp-clang`). GitHub Actions CI runs the firmware
-release builds and clippy for both feature sets, the host tests, documentation
-tests, formatting and host clippy; `cargo +stable tarpaulin` is a local check.
+the ESP32-S3 target (note: unset `LIBCLANG_PATH` on host runs if
+`export-esp.sh` pointed it at `esp-clang`). To conserve CI minutes, GitHub
+Actions CI runs the firmware release builds for both feature sets, host unit
+and integration tests (`--lib --tests`), formatting, and host clippy;
+documentation tests (`--doc`), firmware clippy, and `cargo +stable tarpaulin`
+are local checks.
 
 ### Repeatable hardware verification steps (when a CrowPanel and test services are available)
 
