@@ -12,6 +12,7 @@ extern crate alloc;
 
 // Re-export the main modules for testing
 pub mod buttons;
+pub mod electricity;
 pub mod kata_display;
 pub mod network_config;
 pub mod partitions;

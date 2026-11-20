@@ -1,5 +1,6 @@
 use embassy_executor::Spawner;
 use embassy_net::{
+    tcp::TcpSocket,
     udp::{PacketMetadata, UdpSocket},
     Config as NetConfig, IpAddress, Ipv4Address, Runner, Stack, StackResources,
 };
@@ -9,12 +10,14 @@ use esp_hal::peripherals::WIFI;
 use esp_radio::wifi::{
     sta::StationConfig, AuthenticationMethodConfig, Config, Interface, WifiController,
 };
+use mainichikatarenshu::electricity;
 use mainichikatarenshu::network_config::Credentials;
 use mainichikatarenshu::sntp;
 use static_cell::StaticCell;
 
 pub static CREDENTIALS: Channel<CriticalSectionRawMutex, Credentials, 1> = Channel::new();
 pub static TIME_SYNC: Channel<CriticalSectionRawMutex, u64, 1> = Channel::new();
+pub static PRICE_UPDATE: Channel<CriticalSectionRawMutex, heapless::String<16>, 1> = Channel::new();
 static RESOURCES: StaticCell<StackResources<3>> = StaticCell::new();
 
 #[embassy_executor::task]
@@ -84,6 +87,10 @@ pub async fn wifi_task(wifi: WIFI<'static>, spawner: Spawner) {
                                         let _ = TIME_SYNC.try_send(unix_secs);
                                         time_synced = true;
                                     }
+                                }
+                                // Fetch electricity price
+                                if let Some(price_str) = fetch_electricity_price(stack).await {
+                                    let _ = PRICE_UPDATE.try_send(price_str);
                                 }
                             }
                             None => esp_println::println!("Wi-Fi IPv4 lease lost"),
@@ -159,6 +166,75 @@ async fn query_sntp(stack: Stack<'static>) -> Option<u64> {
             None
         }
     }
+}
+
+async fn fetch_electricity_price(stack: Stack<'static>) -> Option<heapless::String<16>> {
+    esp_println::println!("Fetching electricity spot price...");
+    // Use public Nord Pool / porssisahko API host or HTTP fallback
+    // e.g. api.spot-hinta.fi or api.porssisahko.net
+    let host = "api.porssisahko.net";
+    let server_ip = match stack
+        .dns_query(host, embassy_net::dns::DnsQueryType::A)
+        .await
+    {
+        Ok(addrs) => match addrs.into_iter().next() {
+            Some(ip) => ip,
+            None => {
+                esp_println::println!("Could not resolve price API host");
+                return None;
+            }
+        },
+        Err(e) => {
+            esp_println::println!("DNS lookup failed for price host: {e:?}");
+            return None;
+        }
+    };
+
+    let mut rx_buf = [0u8; 1024];
+    let mut tx_buf = [0u8; 256];
+    let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
+    socket.set_timeout(Some(Duration::from_secs(5)));
+
+    if let Err(e) = socket.connect((server_ip, 80)).await {
+        esp_println::println!("Failed to connect to price API: {e:?}");
+        return None;
+    }
+
+    // Send HTTP GET request
+    use embedded_io_async::Write;
+    let request = "GET /v1/latest-prices.json HTTP/1.1\r\nHost: api.porssisahko.net\r\nConnection: close\r\n\r\n";
+    if let Err(e) = socket.write_all(request.as_bytes()).await {
+        esp_println::println!("Failed to write HTTP request: {e:?}");
+        return None;
+    }
+
+    let mut response_buf = [0u8; 1024];
+    let mut total_read = 0;
+    use embedded_io_async::Read;
+    loop {
+        match socket.read(&mut response_buf[total_read..]).await {
+            Ok(0) => break,
+            Ok(n) => {
+                total_read += n;
+                if total_read >= response_buf.len() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    if let Ok(response_str) = core::str::from_utf8(&response_buf[..total_read]) {
+        if let Some(price_eur_mwh) = electricity::parse_first_price_eur_mwh(response_str) {
+            let entry = electricity::PriceEntry::from_eur_mwh(0, price_eur_mwh);
+            let formatted = entry.format_price();
+            esp_println::println!("Current electricity price: {formatted}");
+            return Some(formatted);
+        }
+    }
+
+    esp_println::println!("No price parsed from API response");
+    None
 }
 
 #[embassy_executor::task]

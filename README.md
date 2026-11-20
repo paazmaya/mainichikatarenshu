@@ -571,14 +571,14 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
   - [x] Station-mode connection via `esp-radio` and `embassy-net` (`src/wireless.rs`)
   - [x] Automatic SNTP / NTP network time synchronization (`src/sntp.rs`)
   - [x] Persistent Wi-Fi credentials in flash storage (`src/storage.rs`)
+- [ ] **Electricity Price Display**
+  - [x] E-paper display widget for electricity spot prices in `kata_display.rs`
+  - [x] HTTP spot price client and parser (`src/electricity.rs` & `src/wireless.rs`)
 - [ ] **Remote Synchronization (Supabase)**
   - [x] Local training record queue (up to 32 days in flash)
   - [x] UART manual export and acknowledgement (`LIST`, `ACK`)
   - [ ] HTTP/REST client to sync training records to Supabase
   - [ ] Automatic record acknowledgement on successful sync
-- [ ] **Electricity Price Display**
-  - [ ] API integration for hourly Nord Pool / energy spot prices
-  - [ ] E-paper display widget for current and upcoming electricity prices
 
 ### Phase 4: Enhancements 🎯 FUTURE
 

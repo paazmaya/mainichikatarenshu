@@ -36,6 +36,7 @@ impl KataDisplayManager {
         time_str: &str,
         kata_name: &str,
         wifi_status: Option<&str>,
+        electricity_price: Option<&str>,
     ) -> Result<(), DisplayError> {
         // Clear and prepare display
         DisplayManager::clear_and_prepare(display)?;
@@ -43,6 +44,12 @@ impl KataDisplayManager {
         // Show WiFi status if provided
         if let Some(status) = wifi_status {
             DisplayManager::show_status_message(display, status, Some(presets::status()))?;
+        }
+
+        // Show electricity price if provided (bottom right status)
+        if let Some(price) = electricity_price {
+            let price_config = presets::status();
+            TextRenderer::write_line(display, price, 10, 275, price_config)?;
         }
 
         // Show date and time

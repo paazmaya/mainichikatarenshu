@@ -151,6 +151,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let mut wifi_password: String<63> = String::new();
     #[cfg(feature = "wifi")]
     let mut wifi_submitted = false;
+    let mut electricity_price: Option<String<16>> = None;
     let mut overflow = false;
     let mut last_second = None;
     let mut training_error = None;
@@ -318,6 +319,14 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
             }
         }
 
+        #[cfg(feature = "wifi")]
+        if let Ok(price_str) = wireless::PRICE_UPDATE.try_receive() {
+            if electricity_price.as_ref() != Some(&price_str) {
+                electricity_price = Some(price_str);
+                redraw = true;
+            }
+        }
+
         let millis = rtc.time_since_power_up().as_millis();
         let event = button
             .sample(input.is_high(), millis)
@@ -398,7 +407,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                         &format!("{:02}:{:02}", local.hour(), local.minute()),
                         &record.kata,
                         Some(status),
-                        None,
+                        electricity_price.as_deref(),
                     )
                     .expect("Display rendering failed");
                 } else {
