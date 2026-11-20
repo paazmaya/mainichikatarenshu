@@ -10,16 +10,25 @@ E-ink display showing a kata for each day, along with current electricity price,
 
 ## Project Status
 
-**Current phase: migration in progress; the application is not yet functional.**
+**Current phase: experimental; the firmware builds but has not been verified on a CrowPanel.**
 
-The firmware builds for `xtensa-esp32s3-none-elf` using `esp-hal` rather
-than ESP-IDF. The experimental entry point connects the display, GPIO5 confirm
-button, manual clock, Helsinki schedule and flash-backed training queue.
-An optional Wi-Fi station implementation uses Espressif's radio and Embassy
-network stack. Host tests cover the state machine, credential validation and
-selected persistence failures, but none of these paths has been verified on a
-CrowPanel. Sleep, other buttons, Nord Pool prices and Supabase synchronization
-are not implemented.
+The firmware targets `xtensa-esp32s3-none-elf` using `esp-hal` rather than
+ESP-IDF. It connects the display, the five buttons, the serial console, the
+Helsinki schedule and the flash-backed training queue. The optional `wifi`
+feature adds a station-mode Wi-Fi stack with SNTP time synchronization,
+hourly electricity price retrieval and Supabase record upload.
+
+Known limitations:
+
+- The electricity price API and Supabase only accept HTTPS, but the firmware
+  has no TLS client yet. Their plain-HTTP requests are redirected or refused,
+  so prices are not shown and records are not uploaded in practice.
+- Only the CONF button changes the workflow; MENU and EXIT refresh the display
+  and UP/DOWN are only logged.
+- Resting before 07:00 pauses the main loop for up to 60 seconds after a
+  redraw; the chip does not enter deep sleep.
+- Host tests cover the logic modules, but no path has been exercised on real
+  hardware or a real access point.
 
 The existing `kata.yaml` maps categories to a kata name. A category may also
 contain a list of names:
@@ -41,9 +50,7 @@ set, that file must exist.
 
 The optional `wifi` feature uses `esp-radio`, `esp-rtos` and `embassy-net`,
 including Espressif's precompiled radio libraries; the firmware is **not**
-pure Rust throughout. The older ESP-IDF `wifi.rs` is not used. Nord Pool API
-access and the Supabase schema and credentials still need to be provisioned
-before live integrations can be implemented and validated.
+pure Rust throughout.
 The bare-metal HAL still calls functions in the chip's existing ROM, and
 `espflash` uses a bootloader; this is not a claim that the entire device
 boot chain consists of Rust source.
@@ -69,18 +76,36 @@ CONNECT
 ```
 
 SSID and passphrase are printable ASCII, with lengths of 1–32 and 8–63 bytes
-respectively. This initial implementation supports WPA2-Personal only; no
-open-network or WPA3 provisioning is provided. Credentials are held in RAM,
-not intentionally written to flash, and must be entered again after a restart.
-The serial connection is plaintext, the terminal may echo or retain commands,
-and RAM is not securely erased; use a trusted serial connection. Restart to
-change credentials or retry a radio initialization failure.
+respectively. Only WPA2-Personal is supported; no open-network or WPA3
+provisioning is provided. `CONNECT` stores the credentials **in plaintext** in
+the `training` flash partition and they are reused automatically after a
+restart. The serial connection is plaintext, the terminal may echo or retain
+commands, and RAM is not securely erased; use a trusted serial connection.
+Restart to change credentials or retry a radio initialization failure.
 
-The firmware reports association, DHCP address, disconnection and connection
-errors on serial and retries after disconnection. It remains usable offline
-while connecting. There is no time synchronization, HTTPS client, Nord Pool
-retrieval or Supabase upload yet. The driver and connection flow have only
-been built, not tested with an ESP32-S3 or access point.
+Once connected, the firmware:
+
+- sets the clock from `pool.ntp.org` (falling back to `time.cloudflare.com`),
+  retrying every minute until one query succeeds;
+- requests the price of the current Helsinki-local hour from
+  [porssisahko.net](https://porssisahko.net/api) once per hour, retrying failures every minute (see the TLS
+  limitation above);
+- uploads the oldest pending record to Supabase when configured, and
+  acknowledges it locally only after a 2xx response.
+
+Supabase is configured at build time. Synchronization is disabled unless both
+host and key are set:
+
+```sh
+SUPABASE_HOST=xyz.supabase.co SUPABASE_ANON_KEY=<anon key> \
+  SUPABASE_TABLE=training_records \
+  cargo +esp build --release --features wifi
+```
+
+`SUPABASE_TABLE` defaults to `training_records`. The table receives
+`{"date": "YYYY-MM-DD", "kata": "...", "confirmed_at": "<RFC 3339>" | null}`.
+The key is embedded in the firmware image, so only use a public anon key with
+row-level security that permits inserts only.
 
 ### Experimental offline operation
 
@@ -96,20 +121,19 @@ On UART0 through the board's serial interface (115200 baud), send newline
 terminated commands:
 
 - `TIME <UTC unix seconds>` sets the clock, for example `TIME 1767225600`.
-  The clock must be set after power loss or a normal reset; no network time
-  source is available. If the time is moved backwards, the training workflow
+  The clock must be set after power loss or a normal reset unless the `wifi`
+  build has synchronized it over SNTP. If the time is moved backwards, the training workflow
   pauses until the clock reaches the last observed time or is corrected. After
   restart, the comparison uses the time saved at the last state change.
 - `LIST` prints pending completed-day records in order.
 - `ACK <YYYY-MM-DD>` permanently removes the oldest pending record. Only
-  acknowledge it after independently saving or synchronizing it; there is no
-  automatic upload. An out-of-order date is rejected.
+  acknowledge it after independently saving or synchronizing it. An
+  out-of-order date is rejected.
 
 The queue holds 32 completed days. When full, the active record remains
 preserved and the workflow pauses; export and acknowledge the oldest record
 to resume. The display is refreshed on state changes, not continuously, so
-the time shown is the time of the last refresh. The device currently polls and
-does not enter low-power sleep.
+the time shown is the time of the last refresh.
 
 The storage implementation uses `sequential-storage` snapshots. While a
 simulated interrupted write and failed commit are tested, the library can skip
@@ -123,13 +147,25 @@ The historical ESP-IDF instructions and roadmap below describe earlier work,
 not the current firmware build or verified functionality. Do not flash an
 existing device without first checking its flash layout and backing up its data.
 
-### Previously implemented components
+### Source layout
 
-- **Custom SSD1680 E-Paper Driver** - Fully functional Rust driver for the CrowPanel ESP32 2.9" display, in its own workspace crate [`crates/crowpanel-ssd1680`](crates/crowpanel-ssd1680/README.md)
-- **Display Rendering** - Text and image display using `embedded-graphics`
-- **RTC Integration** - Date/time tracking with ESP32 RTC
-- **Logo Display** - Build-time image conversion and display
-- **Hardware Initialization** - Complete pin configuration and SPI communication
+| Path                                                                  | Purpose                                                               |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `src/main.rs`                                                         | Firmware entry point: peripheral setup and the main loop              |
+| `src/wireless.rs`                                                     | Wi-Fi station, SNTP, price and Supabase clients (`wifi` feature)      |
+| `src/training.rs`                                                     | Daily training state machine and kata selection                       |
+| `src/schedule.rs`                                                     | Helsinki 07:00–23:00 schedule with DST handling                       |
+| `src/storage.rs`                                                      | Versioned flash snapshots of training state and Wi-Fi credentials     |
+| `src/partitions.rs`                                                   | Partition table validation for the `training` partition               |
+| `src/console.rs`                                                      | Serial line buffering and command parsing                             |
+| `src/clock.rs`                                                        | RTC timestamp validation and conversion                               |
+| `src/buttons.rs`                                                      | Button debouncing                                                     |
+| `src/screens.rs`                                                      | Screen selection and application screens                              |
+| `src/layout.rs`, `src/text.rs`                                        | Drawing helpers, text presets, wrapping and alignment                 |
+| `src/electricity.rs`, `src/supabase.rs`, `src/sntp.rs`, `src/http.rs` | Network protocol helpers                                              |
+| `src/network_config.rs`                                               | Wi-Fi credential validation                                           |
+| `crates/crowpanel-ssd1680`                                            | SSD1680 e-paper driver ([README](crates/crowpanel-ssd1680/README.md)) |
+| `build.rs`, `build_support/`                                          | Embeds `kata.yaml` and the Supabase configuration                     |
 
 ### 🚧 Planned Features
 
@@ -572,13 +608,15 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
   - [x] Automatic SNTP / NTP network time synchronization (`src/sntp.rs`)
   - [x] Persistent Wi-Fi credentials in flash storage (`src/storage.rs`)
 - [ ] **Electricity Price Display**
-  - [x] E-paper display widget for electricity spot prices in `kata_display.rs`
-  - [x] HTTP spot price client and parser (`src/electricity.rs` & `src/wireless.rs`)
+  - [x] Price shown on the kata reminder screen (`src/screens.rs`)
+  - [x] Hourly spot price client and parser (`src/electricity.rs` & `src/wireless.rs`)
+  - [ ] TLS, required by the price API
 - [ ] **Remote Synchronization (Supabase)**
   - [x] Local training record queue (up to 32 days in flash)
   - [x] UART manual export and acknowledgement (`LIST`, `ACK`)
   - [x] HTTP/REST client to sync training records to Supabase (`src/supabase.rs` & `src/wireless.rs`)
   - [x] Automatic record acknowledgement on successful sync (`src/main.rs`)
+  - [ ] TLS, required by Supabase
 
 ### Phase 4: Enhancements 🎯 FUTURE
 
@@ -591,230 +629,49 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 
 ## Testing
 
-This project uses a dual-testing approach to ensure code quality while supporting ESP32 hardware constraints.
+All hardware-independent logic lives in the library crate and is tested on
+the host with the `test-utils` feature, which builds the library with `std`.
+The firmware binary only wires peripherals to that logic, so it is checked by
+compiling it for the device.
 
-### 🧪 Test Architecture
+| Location                                                             | Kind                                                        |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `#[cfg(test)]` modules in `src/` and `crates/crowpanel-ssd1680/src/` | Unit tests                                                  |
+| `tests/state_storage.rs`                                             | Flash persistence with a simulated, failure-injecting flash |
+| `tests/kata_config_tests.rs`                                         | Validates the repository `kata.yaml`                        |
+| Doc comments                                                         | Documentation tests                                         |
 
-The project is configured with both library and binary targets to enable different testing strategies:
+Rendering tests draw into a `Display2in9` frame buffer and compare or inspect
+its bytes, so no panel is required.
 
-- **Library Tests** (`cargo test --lib`) - Pure logic and algorithms without hardware dependencies
-- **Integration Tests** (`cargo test --test`) - Component interactions using mock displays
-- **Hardware Tests** (`cargo +esp test`) - Full ESP32 firmware testing (requires physical device)
+```sh
+# Unit and integration tests, including the driver crate
+cargo +stable test --workspace --lib --tests --features test-utils --target <host-triple>
 
-### 🔧 Test Configuration
+# Documentation tests
+cargo +stable test --workspace --doc --features test-utils --target <host-triple>
 
-#### Feature Flags
-
-- `test-utils` - Disables ESP32-specific dependencies for hardware-independent testing
-- `experimental` - Enables experimental ESP-IDF features
-
-#### Conditional Compilation
-
-```rust
-#[cfg(not(feature = "test-utils"))]
-// ESP32-specific code (WiFi, GPIO, SPI)
-
-#[cfg(feature = "test-utils")]
-// Test-only code and mocks
-```
-
-### 🚀 Running Tests
-
-#### Local Development
-
-```bash
-# Unit tests - Pure logic (no hardware required), including the driver crate
-cargo +stable test --workspace --lib --features test-utils --target <host-triple>
-
-# Driver crate only
-cargo +stable test -p crowpanel-ssd1680 --target <host-triple>
-
-# Integration tests - With mock displays
-cargo test --test unit_tests --features test-utils
-
-# Hardware tests - Requires ESP32 device
-cargo +esp test
+# Lints
+cargo +stable clippy --workspace --lib --tests --features test-utils --target <host-triple> -- -D warnings
+cargo +esp clippy --release --features wifi -- -D warnings
 
 # Coverage - settings in tarpaulin.toml, fails below 90%
 cargo +stable tarpaulin
 ```
 
-#### CI/CD Pipeline
-
-The GitHub Actions workflow runs tests in two stages:
-
-1. **Build Stage** - Uses ESP toolchain to build firmware
-2. **Test Stage** - Uses standard Rust toolchain for hardware-independent tests
-
-```yaml
-- name: Run host tests
-  run: cargo +stable test --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu
-```
-
-### 📋 What Gets Tested
-
-#### ✅ Hardware-Independent Tests
-
-**Text Processing (`src/text.rs`)**
-
-- Text wrapping algorithms
-- Width measurement calculations
-- Font rendering configurations
-- Alignment logic
-
-**Color Conversions (`crates/crowpanel-ssd1680/src/color.rs`)**
-
-- Bit value calculations
-- Byte value conversions
-- Color inversion operations
-
-**Business Logic (`src/kata_display.rs`)**
-
-- Training statistics calculations
-- Data structure operations
-- State management
-
-**Display Utilities (`src/display_utils.rs`)**
-
-- Configuration presets
-- Layout calculations
-- Text positioning logic
-
-**Graphics Calculations (`crates/crowpanel-ssd1680/src/graphics.rs`)**
-
-- Rotation mathematics
-- Buffer operations
-- Coordinate transformations
-
-#### ⚠️ Hardware-Dependent Tests
-
-**ESP32 Integration**
-
-- SPI communication
-- GPIO pin operations
-- WiFi connectivity
-- RTC functionality
-- Deep sleep operations
-
-### 🎯 Test Structure
-
-#### Unit Tests (In-module)
-
-```rust
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_text_wrapping() {
-        // Test pure logic
-    }
-}
-```
-
-#### Integration Tests (`tests/unit_tests.rs`)
-
-```rust
-use embedded_graphics::mock_display::MockDisplay;
-use mainichikatarenshu::text::TextRenderer;
-
-#[test]
-fn test_complete_rendering_pipeline() {
-    let mut display = MockDisplay::new();
-    // Test component interactions
-}
-```
-
-#### Mock Displays
-
-Tests use `embedded_graphics::mock_display::MockDisplay` to simulate the e-paper display without requiring hardware:
-
-```rust
-let mut display = MockDisplay::new();
-let result = TextRenderer::write_line(&mut display, "Hello", 10, 20, config);
-assert!(result.is_ok());
-```
-
-### 🔍 Test Coverage
-
-#### Current Coverage
-
-- ✅ Text rendering algorithms (100%)
-- ✅ Color conversions (100%)
-- ✅ Training statistics (100%)
-- ✅ Display utilities (95%)
-- ✅ Graphics calculations (90%)
-- ⚠️ Hardware drivers (0% - requires device)
-
-#### Adding New Tests
-
-1. **Pure Logic Tests** - Add directly in module files
-2. **Integration Tests** - Add to `tests/unit_tests.rs`
-3. **Hardware Tests** - Add to module files with ESP32 dependencies
-
-```rust
-// Example: Adding a new test
-#[test]
-fn test_new_feature() {
-    // Arrange
-    let input = create_test_input();
-
-    // Act
-    let result = function_to_test(input);
-
-    // Assert
-    assert_eq!(result.expected_value, actual_value);
-}
-```
-
-### 🐛 Debugging Test Failures
-
-#### Common Issues
-
-1. **Linker Errors** - Ensure `test-utils` feature is enabled
-2. **Missing Hardware** - Use mock displays instead of real hardware
-3. **Import Errors** - Check conditional compilation directives
-
-#### Debug Commands
-
-```bash
-# Verbose test output
-cargo test --lib --features test-utils -- --nocapture
-
-# Specific test
-cargo test test_text_wrapping --lib --features test-utils
-
-# Run with backtrace
-RUST_BACKTRACE=1 cargo test --lib --features test-utils
-```
-
-### 📊 CI Test Results
-
-The CI pipeline provides:
-
-- ✅ **Unit Test Results** - All pure logic tests
-- ✅ **Integration Test Results** - Component interaction tests
-- ✅ **Build Verification** - ESP32 firmware compilation
-- ✅ **Code Quality Checks** - Clippy and formatting
-
-### 🚧 Future Testing Improvements
-
-- [ ] Add property-based testing with `proptest`
-- [ ] Implement fuzz testing for text parsing
-- [ ] Add performance benchmarks
-- [ ] Create hardware-in-the-loop test fixtures
-- [ ] Add visual regression tests for display output
+The host triple is, for example, `x86_64-unknown-linux-gnu` or
+`aarch64-apple-darwin`; it is needed because `.cargo/config.toml` defaults to
+the ESP32-S3 target. CI runs the firmware builds and clippy for both feature
+sets, the host tests, documentation tests, formatting and clippy.
 
 ## Build System
 
-The project uses a custom build script (`build.rs`) that:
+The build script (`build.rs`) generates two files in `OUT_DIR`:
 
-1. **Converts `logo.png` to binary format** - The logo image is processed at build time and embedded into the firmware
-2. **Generates display-compatible format** - Images are converted to the correct bit format for the SSD1680 controller
-3. **Embeds resources** - Binary data is included via `include_bytes!` macro
-
-To use your own logo:
-
-1. Replace `logo.png` in the project root (128×296 pixels, black & white recommended)
-2. Run `cargo build` - the image will be automatically converted
+- `kata.rs` - the kata names from `kata.yaml` (or `KATA_CONFIG`), validated by
+  `build_support/kata_config.rs`;
+- `supabase.rs` - the optional Supabase settings from `SUPABASE_HOST`,
+  `SUPABASE_ANON_KEY` and `SUPABASE_TABLE`.
 
 ## License
 

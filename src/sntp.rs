@@ -15,8 +15,11 @@ pub const NTP_PORT: u16 = 123;
 /// Errors that can occur when parsing an SNTP response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SntpError {
+    /// The packet is shorter than 48 bytes.
     BufferTooShort,
+    /// Stratum 0: a kiss-o'-death or unsynchronized server.
     InvalidStratum,
+    /// The transmit timestamp predates the Unix epoch.
     InvalidTimestamp,
 }
 
@@ -26,6 +29,7 @@ pub enum SntpError {
 /// - LI (Leap Indicator) = 0 (no warning)
 /// - VN (Version Number) = 4 (NTPv4)
 /// - Mode = 3 (Client)
+///
 /// Byte 0 = (0 << 6) | (4 << 3) | 3 = 0x23 (or 0x1B for v3, 0x23 for v4).
 pub fn create_request() -> [u8; SNTP_PACKET_SIZE] {
     let mut packet = [0u8; SNTP_PACKET_SIZE];

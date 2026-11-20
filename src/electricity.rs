@@ -1,129 +1,145 @@
-//! Spot electricity price parsing and formatting.
+//! Finnish spot electricity price retrieval helpers.
 //!
-//! Provides parsing and representation of hourly spot prices (e.g. from Nord Pool / ENTSO-E).
-//! Standard electricity prices in the Finnish/Nordic market are commonly quoted in
-//! cents per kilowatt-hour (c/kWh) or EUR/MWh (1 EUR/MWh = 0.1 c/kWh).
+//! Prices come from the [porssisahko.net](https://porssisahko.net/api) API,
+//! which reports the hourly price in cents per kilowatt-hour (c/kWh), VAT
+//! included. `GET /v1/price.json?date=YYYY-MM-DD&hour=H` returns `{"price":11.972}`
+//! for the given Helsinki-local hour.
+//!
+//! The API only serves HTTPS; plain HTTP requests are redirected.
 
+use chrono::{DateTime, Timelike, Utc};
+use chrono_tz::Europe::Helsinki;
+use core::fmt::Write;
 use heapless::String;
 
-/// Represents an hourly spot price entry.
+/// Host name of the price API.
+pub const PRICE_API_HOST: &str = "api.porssisahko.net";
+
+/// An electricity price, stored in tenths of a cent per kWh to avoid floats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PriceEntry {
-    /// UTC timestamp of the hour start.
-    pub timestamp: i64,
-    /// Price in tenths of a cent per kWh (e.g. 124 represents 12.4 c/kWh).
-    pub price_tenths_c_kwh: i32,
+pub struct Price {
+    tenths_c_kwh: i32,
 }
 
-impl PriceEntry {
-    pub const fn new(timestamp: i64, price_tenths_c_kwh: i32) -> Self {
-        Self {
-            timestamp,
-            price_tenths_c_kwh,
-        }
+impl Price {
+    /// A price of `tenths_c_kwh / 10` c/kWh.
+    pub const fn from_tenths_c_kwh(tenths_c_kwh: i32) -> Self {
+        Self { tenths_c_kwh }
     }
 
-    /// Converts EUR per MWh to tenths of a cent per kWh.
-    /// 1 EUR/MWh = 0.100 c/kWh = 1 tenth of a cent.
-    pub fn from_eur_mwh(timestamp: i64, eur_mwh: f32) -> Self {
-        let price_tenths = (eur_mwh + 0.5) as i32;
-        Self {
-            timestamp,
-            price_tenths_c_kwh: price_tenths,
-        }
+    /// The price in tenths of a cent per kWh.
+    pub const fn tenths_c_kwh(self) -> i32 {
+        self.tenths_c_kwh
     }
 
-    /// Formats the price as a human-readable string, e.g. "12.4 c/kWh".
-    pub fn format_price(&self) -> String<16> {
-        let mut s = String::new();
-        let sign = if self.price_tenths_c_kwh < 0 { "-" } else { "" };
-        let abs_val = self.price_tenths_c_kwh.abs();
-        let whole = abs_val / 10;
-        let frac = abs_val % 10;
-
-        use core::fmt::Write;
-        let _ = write!(s, "{}{}.{} c", sign, whole, frac);
-        s
+    /// Format with one decimal, e.g. `"12.4 c/kWh"` or `"-0.5 c/kWh"`.
+    pub fn format(self) -> String<16> {
+        let mut text = String::new();
+        let sign = if self.tenths_c_kwh < 0 { "-" } else { "" };
+        let tenths = self.tenths_c_kwh.unsigned_abs();
+        // Values beyond ±99 999 999.9 c/kWh do not fit and are truncated.
+        let _ = write!(text, "{sign}{}.{} c/kWh", tenths / 10, tenths % 10);
+        text
     }
 }
 
-/// Parses a simple JSON response containing a list of prices.
+/// Request path for the price of the Helsinki-local hour containing `now`.
+pub fn price_request_path(now: DateTime<Utc>) -> String<48> {
+    let local = now.with_timezone(&Helsinki);
+    let mut path = String::new();
+    // The longest path is 39 bytes, so this cannot overflow.
+    let _ = write!(
+        path,
+        "/v1/price.json?date={}&hour={}",
+        local.date_naive(),
+        local.hour()
+    );
+    path
+}
+
+/// Extract the price from a `price.json` response body or full HTTP response.
+pub fn parse_price_response(body: &str) -> Option<Price> {
+    let after_key = &body[body.find("\"price\"")? + "\"price\"".len()..];
+    let value = after_key.trim_start().strip_prefix(':')?.trim_start();
+    let end = value
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .unwrap_or(value.len());
+    parse_decimal_tenths(&value[..end]).map(Price::from_tenths_c_kwh)
+}
+
+/// Parse a decimal number into tenths, rounding half away from zero.
 ///
-/// Example JSON shape supported (from public spot price APIs):
-/// `{"prices":[{"startDate":"2026-11-20T10:00:00.000Z","price":12.35}]}`
-/// or `[{"price": 12.4, "startDate": "..."}]`
-///
-/// Extracts the first or current price found for minimal memory footprint.
-pub fn parse_first_price_eur_mwh(json: &str) -> Option<f32> {
-    // Locate "price" key
-    let idx = json.find("\"price\"")?;
-    let rest = &json[idx + 7..];
-    let start = rest.find(|c: char| c.is_ascii_digit() || c == '-' || c == '.')?;
-    let number_str = &rest[start..];
-    let end = number_str
-        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
-        .unwrap_or(number_str.len());
-
-    parse_float(&number_str[..end])
-}
-
-fn parse_float(s: &str) -> Option<f32> {
-    // Simple no_std float parsing
-    let mut parts = s.split('.');
-    let whole_str = parts.next()?;
-    let is_neg = whole_str.starts_with('-');
-    let whole_digits = if is_neg { &whole_str[1..] } else { whole_str };
-
-    let whole: i32 = whole_digits.parse().ok()?;
-    let frac = match parts.next() {
-        Some(frac_str) if !frac_str.is_empty() => {
-            let digits = frac_str.as_bytes();
-            let mut val = 0.0f32;
-            let mut divisor = 10.0f32;
-            for &d in digits.iter().take(4) {
-                if !d.is_ascii_digit() {
-                    break;
-                }
-                val += (d - b'0') as f32 / divisor;
-                divisor *= 10.0;
-            }
-            val
-        }
-        _ => 0.0,
+/// Uses integer arithmetic only: `"11.972"` → `120`, `"-1.25"` → `-13`.
+fn parse_decimal_tenths(text: &str) -> Option<i32> {
+    let (negative, digits) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
     };
-
-    let result = (whole as f32) + frac;
-    Some(if is_neg { -result } else { result })
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    if whole.is_empty() || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let whole: i32 = whole.parse().ok()?;
+    let mut fraction_digits = fraction.bytes().map(|byte| i32::from(byte - b'0'));
+    let tenths = fraction_digits.next().unwrap_or(0);
+    let round_up = fraction_digits.next().unwrap_or(0) >= 5;
+    let magnitude = whole
+        .checked_mul(10)?
+        .checked_add(tenths + i32::from(round_up))?;
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     #[test]
-    fn format_positive_and_negative_prices() {
-        let p1 = PriceEntry::new(1795168800, 124);
-        assert_eq!(p1.format_price(), "12.4 c");
-
-        let p2 = PriceEntry::new(1795168800, -5);
-        assert_eq!(p2.format_price(), "-0.5 c");
-
-        let p3 = PriceEntry::new(1795168800, 0);
-        assert_eq!(p3.format_price(), "0.0 c");
+    fn formats_prices_with_unit() {
+        assert_eq!(Price::from_tenths_c_kwh(124).format(), "12.4 c/kWh");
+        assert_eq!(Price::from_tenths_c_kwh(-5).format(), "-0.5 c/kWh");
+        assert_eq!(Price::from_tenths_c_kwh(0).format(), "0.0 c/kWh");
     }
 
     #[test]
-    fn parses_json_price() {
-        let json = r#"{"prices":[{"price":89.5,"startDate":"2026-11-20T10:00:00Z"}]}"#;
-        let price = parse_first_price_eur_mwh(json);
-        assert!(price.is_some());
-        let val = price.unwrap();
-        assert!((val - 89.5).abs() < 0.1);
+    fn parses_api_response_in_cents_per_kwh() {
+        let price = |body| parse_price_response(body).map(Price::tenths_c_kwh);
+        assert_eq!(price(r#"{"price":11.972}"#), Some(120));
+        assert_eq!(price(r#"{"price": 8.94}"#), Some(89));
+        assert_eq!(price(r#"{"price":-1.25}"#), Some(-13));
+        assert_eq!(price(r#"{"price":-0.04}"#), Some(0));
+        assert_eq!(price(r#"{"price":3}"#), Some(30));
+        assert_eq!(
+            price("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"price\":0.5}"),
+            Some(5)
+        );
+    }
 
-        let json_neg = r#"{"price": -1.25}"#;
-        let price_neg = parse_first_price_eur_mwh(json_neg);
-        assert!(price_neg.is_some());
-        let val_neg = price_neg.unwrap();
-        assert!((val_neg - -1.25).abs() < 0.1);
+    #[test]
+    fn rejects_missing_or_malformed_prices() {
+        for body in [
+            "",
+            "<html>301 Moved Permanently</html>",
+            r#"{"price":null}"#,
+            r#"{"price":"1.5"}"#,
+            r#"{"price":.5}"#,
+            r#"{"price":1.2.3}"#,
+        ] {
+            assert_eq!(parse_price_response(body), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn request_path_uses_helsinki_hour() {
+        let winter = Utc.with_ymd_and_hms(2026, 11, 20, 22, 30, 0).unwrap();
+        assert_eq!(
+            price_request_path(winter),
+            "/v1/price.json?date=2026-11-21&hour=0"
+        );
+        let summer = Utc.with_ymd_and_hms(2026, 7, 5, 4, 0, 0).unwrap();
+        assert_eq!(
+            price_request_path(summer),
+            "/v1/price.json?date=2026-07-05&hour=7"
+        );
     }
 }

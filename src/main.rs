@@ -1,10 +1,16 @@
+//! Firmware entry point for the CrowPanel ESP32-S3 2.9" e-paper display.
+//!
+//! This binary only wires peripherals to the hardware-independent logic in
+//! the library crate: it polls the serial console, buttons and (with the
+//! `wifi` feature) network channels, advances the training state and redraws
+//! the panel when something visible changed.
+
 #![no_std]
 #![no_main]
 
 extern crate alloc;
 
-use alloc::format;
-use chrono::{DateTime, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use core::panic::PanicInfo;
 use crowpanel_ssd1680::{Display, Display2in9, Ssd1680};
 use embassy_embedded_hal::adapter::BlockingAsync;
@@ -12,28 +18,52 @@ use embassy_futures::block_on;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::{
     delay::Delay,
-    gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
+    gpio::{Input, InputConfig, InputPin, Level, Output, OutputConfig, OutputPin, Pull},
+    peripherals::{FLASH, SPI2, UART0},
     rng::Rng,
     rtc_cntl::{reset_reason, Rtc, SocResetReason},
-    spi::master::{Config, Spi},
+    spi::master::{Config as SpiConfig, Spi},
     system::Cpu,
     time::Rate,
     uart::{Config as UartConfig, Uart},
+    Blocking,
 };
 use esp_storage::FlashStorage;
 use heapless::String;
 use mainichikatarenshu::{
-    buttons::{ButtonBank, ButtonId, Event},
-    display_utils::DisplayManager,
+    buttons::{ButtonBank, ButtonId},
+    clock,
+    console::{parse_command, Command, CommandError, LineBuffer, LineError},
     kata::KATA,
-    kata_display::KataDisplayManager,
-    partitions::training_partition,
+    layout,
+    partitions::find_training_partition,
+    schedule::seconds_until_next_transition,
+    screens::{draw_screen, select_screen},
     storage::{PersistentTraining, StateStore, TransactionError},
-    training::{Change, Error as TrainingError},
+    training::{choose_kata, Change, Error as TrainingError},
 };
 
 #[cfg(feature = "wifi")]
 mod wireless;
+
+/// Offset of the ESP partition table in flash.
+const PARTITION_TABLE_OFFSET: u32 = 0x8000;
+/// Button debounce interval in milliseconds.
+const DEBOUNCE_MS: u64 = 50;
+/// Main loop polling interval in milliseconds.
+const POLL_INTERVAL_MS: u32 = 25;
+/// Longest single rest pause, so serial input is still noticed regularly.
+const MAX_REST_SECS: u64 = 60;
+
+type Panel = Ssd1680<
+    ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, Delay>,
+    Input<'static>,
+    Output<'static>,
+    Output<'static>,
+    Delay,
+>;
+type Training = PersistentTraining<BlockingAsync<FlashStorage<'static>>>;
+type TrainingResult<T> = Result<T, TransactionError<esp_storage::FlashStorageError>>;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -64,460 +94,440 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let wifi_available = {
         let timer = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
         esp_rtos::start(timer.timer0, peripherals.FROM_CPU_INTR0);
-        match wireless::wifi_task(peripherals.WIFI, spawner) {
-            Ok(task) => {
-                spawner.spawn(task);
-                true
-            }
-            Err(error) => {
-                esp_println::println!("Wi-Fi task failed to start: {error:?}");
-                false
-            }
-        }
+        wireless::start(peripherals.WIFI, spawner)
     };
 
-    let spi = Spi::new(
+    let mut panel = init_panel(
         peripherals.SPI2,
-        Config::default().with_frequency(Rate::from_mhz(4)),
-    )
-    .expect("SPI configuration failed")
-    .with_sck(peripherals.GPIO12)
-    .with_mosi(peripherals.GPIO11);
-    let cs = Output::new(peripherals.GPIO45, Level::High, OutputConfig::default());
-    let dc = Output::new(peripherals.GPIO46, Level::Low, OutputConfig::default());
-    let rst = Output::new(peripherals.GPIO47, Level::High, OutputConfig::default());
-    let busy = Input::new(peripherals.GPIO48, InputConfig::default());
-    let spi = ExclusiveDevice::new(spi, cs, Delay::new()).expect("SPI CS initialization failed");
-    let mut panel =
-        Ssd1680::new(spi, busy, dc, rst, Delay::new()).expect("Display initialization failed");
+        peripherals.GPIO12,
+        peripherals.GPIO11,
+        peripherals.GPIO45,
+        peripherals.GPIO46,
+        peripherals.GPIO47,
+        peripherals.GPIO48,
+    );
     let mut display = Display2in9::new();
-
     if KATA.is_empty() {
-        DisplayManager::show_centered_message(&mut display, "kata.yaml missing", None)
-            .expect("Display rendering failed");
-        panel
-            .display_frame(display.buffer())
-            .expect("Display update failed");
-        panic!("Configure kata.yaml and rebuild the firmware");
+        halt_unconfigured(&mut panel, &mut display);
     }
 
-    let mut flash = FlashStorage::new(peripherals.FLASH);
     let mut scratch = [0u8; 4096];
-    flash
-        .read(0x8000, &mut scratch)
-        .expect("Cannot read partition table");
-    let range = training_partition(&scratch, flash.capacity() as u32)
-        .expect("Invalid or missing training partition");
-    let store =
-        StateStore::new(BlockingAsync::new(flash), range).expect("Invalid training storage range");
-    let mut training =
-        block_on(PersistentTraining::load(store, &mut scratch)).expect("Cannot load training data");
-
-    #[cfg(feature = "wifi")]
-    let mut wifi_submitted = false;
-    #[cfg(feature = "wifi")]
-    if wifi_available {
-        if let Ok(Some(saved_creds)) = block_on(training.load_wifi_credentials(&mut scratch)) {
-            esp_println::println!(
-                "Loaded saved Wi-Fi credentials from flash for SSID: {}",
-                saved_creds.ssid
-            );
-            if wireless::CREDENTIALS.try_send(saved_creds).is_ok() {
-                wifi_submitted = true;
-                esp_println::println!("Connecting to saved Wi-Fi network");
-            }
-        }
-    }
-
-    let mut uart = Uart::new(peripherals.UART0, UartConfig::default())
-        .expect("UART configuration failed")
-        .with_rx(peripherals.GPIO44)
-        .with_tx(peripherals.GPIO43);
+    let training = load_training(peripherals.FLASH, &mut scratch);
     let rtc = Rtc::new(peripherals.RTC_TIMER);
-    let mut time_valid = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep)
-        && rtc.current_time_us() / 1_000_000 >= 946_684_800;
-    let btn_conf = Input::new(
-        peripherals.GPIO5,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let btn_menu = Input::new(
-        peripherals.GPIO2,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let btn_exit = Input::new(
-        peripherals.GPIO1,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let btn_down = Input::new(
-        peripherals.GPIO4,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let btn_up = Input::new(
-        peripherals.GPIO6,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let mut buttons = ButtonBank::new(50, rtc.time_since_power_up().as_millis());
-    let mut command: String<96> = String::new();
+    // The RTC keeps time only across deep sleep; after other resets it must be set again.
+    let time_valid = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep)
+        && clock::is_rtc_time_valid(rtc.current_time_us());
+    let buttons = Buttons {
+        bank: ButtonBank::new(DEBOUNCE_MS, rtc.time_since_power_up().as_millis()),
+        confirm: pull_up_input(peripherals.GPIO5),
+        menu: pull_up_input(peripherals.GPIO2),
+        exit: pull_up_input(peripherals.GPIO1),
+        down: pull_up_input(peripherals.GPIO4),
+        up: pull_up_input(peripherals.GPIO6),
+    };
+
+    let mut app = App {
+        panel,
+        display,
+        rtc,
+        uart: init_uart(peripherals.UART0, peripherals.GPIO44, peripherals.GPIO43),
+        console: LineBuffer::new(),
+        buttons,
+        training,
+        scratch,
+        rng: Rng::new(),
+        time_valid,
+        last_second: None,
+        training_error: None,
+        electricity_price: None,
+        redraw: true,
+        #[cfg(feature = "wifi")]
+        wifi: wireless::Provisioning::new(wifi_available),
+        #[cfg(feature = "wifi")]
+        sync_in_flight: false,
+    };
     #[cfg(feature = "wifi")]
-    let mut wifi_ssid: String<32> = String::new();
-    #[cfg(feature = "wifi")]
-    let mut wifi_password: String<63> = String::new();
-    #[cfg(feature = "wifi")]
-    let mut wifi_submitted = false;
-    let mut electricity_price: Option<String<16>> = None;
-    let mut overflow = false;
-    let mut last_second = None;
-    let mut training_error = None;
-    let mut redraw = true;
-    let rng = Rng::new();
-    #[cfg(not(feature = "wifi"))]
-    let delay = Delay::new();
+    app.connect_saved_wifi();
 
     esp_println::println!("Commands: TIME <UTC unix seconds>, LIST, ACK <YYYY-MM-DD>");
     #[cfg(feature = "wifi")]
     esp_println::println!("Wi-Fi: SSID <name>, PASSWORD <passphrase>, CONNECT");
     loop {
-        while uart.read_ready() {
+        app.poll_console();
+        #[cfg(feature = "wifi")]
+        app.poll_network();
+        let confirm_pressed = app.poll_buttons();
+        let now = app.update_training(confirm_pressed);
+        if app.redraw {
+            app.refresh_display(now);
+            if let Some(secs) = app.rest_pause(now) {
+                pause_ms(u32::try_from(secs * 1000).unwrap_or(u32::MAX)).await;
+            }
+        }
+        pause_ms(POLL_INTERVAL_MS).await;
+    }
+}
+
+/// Configure SPI and control pins for the e-paper panel.
+fn init_panel(
+    spi: SPI2<'static>,
+    sck: impl OutputPin + 'static,
+    mosi: impl OutputPin + 'static,
+    cs: impl OutputPin + 'static,
+    dc: impl OutputPin + 'static,
+    rst: impl OutputPin + 'static,
+    busy: impl InputPin + 'static,
+) -> Panel {
+    let spi = Spi::new(spi, SpiConfig::default().with_frequency(Rate::from_mhz(4)))
+        .expect("SPI configuration failed")
+        .with_sck(sck)
+        .with_mosi(mosi);
+    let cs = Output::new(cs, Level::High, OutputConfig::default());
+    let dc = Output::new(dc, Level::Low, OutputConfig::default());
+    let rst = Output::new(rst, Level::High, OutputConfig::default());
+    let busy = Input::new(busy, InputConfig::default());
+    let spi = ExclusiveDevice::new(spi, cs, Delay::new()).expect("SPI CS initialization failed");
+    Ssd1680::new(spi, busy, dc, rst, Delay::new()).expect("Display initialization failed")
+}
+
+/// Show a configuration error and stop: there is nothing to select from.
+fn halt_unconfigured(panel: &mut Panel, display: &mut Display2in9) -> ! {
+    layout::clear(display).expect("Display clear failed");
+    layout::draw_centered_message(display, "kata.yaml missing").expect("Display rendering failed");
+    panel
+        .display_frame(display.buffer())
+        .expect("Display update failed");
+    panic!("Configure kata.yaml and rebuild the firmware");
+}
+
+/// Locate the `training` partition and load the persisted training state.
+fn load_training(flash: FLASH<'static>, scratch: &mut [u8]) -> Training {
+    let mut flash = FlashStorage::new(flash);
+    flash
+        .read(PARTITION_TABLE_OFFSET, scratch)
+        .expect("Cannot read partition table");
+    let range = find_training_partition(scratch, flash.capacity() as u32)
+        .expect("Invalid or missing training partition");
+    let store =
+        StateStore::new(BlockingAsync::new(flash), range).expect("Invalid training storage range");
+    block_on(PersistentTraining::load(store, scratch)).expect("Cannot load training data")
+}
+
+/// UART0 console on the board's USB serial bridge.
+fn init_uart(
+    uart: UART0<'static>,
+    rx: impl InputPin + 'static,
+    tx: impl OutputPin + 'static,
+) -> Uart<'static, Blocking> {
+    Uart::new(uart, UartConfig::default())
+        .expect("UART configuration failed")
+        .with_rx(rx)
+        .with_tx(tx)
+}
+
+/// Active-low button input with the internal pull-up enabled.
+fn pull_up_input(pin: impl InputPin + 'static) -> Input<'static> {
+    Input::new(pin, InputConfig::default().with_pull(Pull::Up))
+}
+
+#[cfg(not(feature = "wifi"))]
+async fn pause_ms(ms: u32) {
+    Delay::new().delay_millis(ms);
+}
+
+#[cfg(feature = "wifi")]
+async fn pause_ms(ms: u32) {
+    embassy_time::Timer::after_millis(ms.into()).await;
+}
+
+/// Unwrap a training transaction, stopping on storage failures.
+///
+/// After a failed flash write the stored state is ambiguous, so continuing
+/// could silently lose or duplicate records.
+fn check_storage<T>(result: TrainingResult<T>, action: &str) -> Result<T, TrainingError> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(TransactionError::Training(error)) => Err(error),
+        Err(TransactionError::Storage(error)) => panic!("{action} storage failed: {error:?}"),
+        Err(TransactionError::RequiresReload) => panic!("Training storage requires reload"),
+    }
+}
+
+/// The five CrowPanel buttons and their debouncers.
+struct Buttons {
+    bank: ButtonBank,
+    confirm: Input<'static>,
+    menu: Input<'static>,
+    exit: Input<'static>,
+    down: Input<'static>,
+    up: Input<'static>,
+}
+
+/// Peripherals and state of the main loop.
+struct App {
+    panel: Panel,
+    display: Display2in9,
+    rtc: Rtc<'static>,
+    uart: Uart<'static, Blocking>,
+    console: LineBuffer<96>,
+    buttons: Buttons,
+    training: Training,
+    /// Scratch buffer for flash operations.
+    scratch: [u8; 4096],
+    rng: Rng,
+    /// Whether the RTC holds a trusted time.
+    time_valid: bool,
+    /// The RTC second at which training was last advanced.
+    last_second: Option<u64>,
+    /// The error currently pausing the training workflow.
+    training_error: Option<TrainingError>,
+    electricity_price: Option<String<16>>,
+    /// Whether the panel must be refreshed.
+    redraw: bool,
+    #[cfg(feature = "wifi")]
+    wifi: wireless::Provisioning,
+    /// Whether a record was handed to the network task and no result arrived yet.
+    #[cfg(feature = "wifi")]
+    sync_in_flight: bool,
+}
+
+impl App {
+    /// Read pending serial bytes and execute completed command lines.
+    fn poll_console(&mut self) {
+        while self.uart.read_ready() {
             let mut byte = [0u8; 1];
-            uart.read(&mut byte).expect("UART read failed");
-            match byte[0] {
-                b'\r' | b'\n' if overflow => {
-                    esp_println::println!("Command too long");
-                    command.clear();
-                    overflow = false;
-                }
-                b'\r' | b'\n' if !command.is_empty() => {
-                    if let Some(value) = command.strip_prefix("TIME ") {
-                        match value.parse::<u64>().ok().and_then(|seconds| {
-                            let micros = seconds.checked_mul(1_000_000)?;
-                            DateTime::<Utc>::from_timestamp(i64::try_from(seconds).ok()?, 0)?;
-                            Some(micros)
-                        }) {
-                            Some(micros) if micros >= 946_684_800_000_000 => {
-                                rtc.set_current_time_us(micros);
-                                time_valid = true;
-                                last_second = None;
-                                redraw = true;
-                                esp_println::println!("Clock set");
-                            }
-                            _ => esp_println::println!(
-                                "Invalid TIME; provide UTC unix seconds since 2000"
-                            ),
-                        }
-                    } else if command == "LIST" {
-                        esp_println::println!(
-                            "Pending records: {}",
-                            training.state().pending().len()
-                        );
-                        for record in training.state().pending() {
-                            esp_println::println!(
-                                "{} | {:?} | confirmed: {:?}",
-                                record.date,
-                                record.kata,
-                                record.confirmed_at
-                            );
-                        }
-                    } else if let Some(value) = command.strip_prefix("ACK ") {
-                        match NaiveDate::parse_from_str(value, "%Y-%m-%d") {
-                            Ok(date) => match block_on(training.acknowledge(&mut scratch, date)) {
-                                Ok(_) => {
-                                    esp_println::println!("Record acknowledged");
-                                    last_second = None;
-                                }
-                                Err(TransactionError::Training(error)) => {
-                                    esp_println::println!("ACK failed: {error:?}")
-                                }
-                                Err(TransactionError::Storage(error)) => {
-                                    panic!("ACK storage failed: {error:?}")
-                                }
-                                Err(TransactionError::RequiresReload) => {
-                                    panic!("Training storage requires reload")
-                                }
-                            },
-                            Err(_) => esp_println::println!("Invalid ACK date"),
-                        }
-                    } else if cfg!(feature = "wifi") && command.starts_with("SSID ") {
-                        #[cfg(feature = "wifi")]
-                        {
-                            match String::try_from(&command[5..]) {
-                                Ok(value) => {
-                                    wifi_ssid = value;
-                                    esp_println::println!("SSID received");
-                                }
-                                Err(_) => {
-                                    wifi_ssid.clear();
-                                    esp_println::println!("SSID too long");
-                                }
-                            }
-                        }
-                    } else if cfg!(feature = "wifi") && command.starts_with("PASSWORD ") {
-                        #[cfg(feature = "wifi")]
-                        {
-                            match String::try_from(&command[9..]) {
-                                Ok(value) => {
-                                    wifi_password = value;
-                                    esp_println::println!("Password received");
-                                }
-                                Err(_) => {
-                                    wifi_password.clear();
-                                    esp_println::println!("Password too long");
-                                }
-                            }
-                        }
-                    } else if cfg!(feature = "wifi") && command == "CONNECT" {
-                        #[cfg(feature = "wifi")]
-                        {
-                            if !wifi_available {
-                                esp_println::println!("Wi-Fi task unavailable; restart to retry");
-                            } else if wifi_submitted {
-                                esp_println::println!("Restart to change Wi-Fi credentials");
-                            } else {
-                                match mainichikatarenshu::network_config::Credentials::new(
-                                    &wifi_ssid,
-                                    &wifi_password,
-                                ) {
-                                    Ok(credentials) => {
-                                        if let Err(e) = block_on(
-                                            training
-                                                .save_wifi_credentials(&mut scratch, &credentials),
-                                        ) {
-                                            esp_println::println!("Warning: Failed to save Wi-Fi credentials to flash: {e:?}");
-                                        } else {
-                                            esp_println::println!(
-                                                "Saved Wi-Fi credentials to flash"
-                                            );
-                                        }
-                                        match wireless::CREDENTIALS.try_send(credentials) {
-                                            Ok(()) => {
-                                                wifi_submitted = true;
-                                                wifi_password.clear();
-                                                esp_println::println!("Wi-Fi connection requested");
-                                            }
-                                            Err(_) => {
-                                                esp_println::println!("Wi-Fi request queue full")
-                                            }
-                                        }
-                                    }
-                                    Err(error) => esp_println::println!(
-                                        "Invalid Wi-Fi configuration: {error:?}"
-                                    ),
-                                }
-                            }
-                        }
-                    } else {
-                        esp_println::println!("Unknown command");
-                    }
-                    command.clear();
-                }
-                b'\r' | b'\n' => {}
-                byte if !overflow && byte.is_ascii() => {
-                    if command.push(char::from(byte)).is_err() {
-                        overflow = true;
-                    }
-                }
-                _ => overflow = true,
+            self.uart.read(&mut byte).expect("UART read failed");
+            match self.console.push(byte[0]) {
+                None => {}
+                Some(Ok(line)) => self.execute_command(&line),
+                Some(Err(LineError::TooLong)) => esp_println::println!("Command too long"),
+                Some(Err(LineError::NotAscii)) => esp_println::println!("Command must be ASCII"),
             }
         }
+    }
 
-        #[cfg(feature = "wifi")]
+    fn execute_command(&mut self, line: &str) {
+        match parse_command(line) {
+            Ok(Command::SetTime(rtc_micros)) => {
+                self.set_clock(rtc_micros);
+                esp_println::println!("Clock set");
+            }
+            Ok(Command::List) => self.print_pending_records(),
+            Ok(Command::Acknowledge(date)) => self.acknowledge(date),
+            #[cfg(feature = "wifi")]
+            Ok(Command::Ssid(ssid)) => self.wifi.stage_ssid(ssid),
+            #[cfg(feature = "wifi")]
+            Ok(Command::Password(password)) => self.wifi.stage_password(password),
+            #[cfg(feature = "wifi")]
+            Ok(Command::Connect) => self.connect_staged_wifi(),
+            #[cfg(not(feature = "wifi"))]
+            Ok(Command::Ssid(_) | Command::Password(_) | Command::Connect) => {
+                esp_println::println!("Unknown command")
+            }
+            Err(CommandError::InvalidTime) => {
+                esp_println::println!("Invalid TIME; provide UTC unix seconds since 2000")
+            }
+            Err(CommandError::InvalidDate) => esp_println::println!("Invalid ACK date"),
+            Err(CommandError::Unknown) => esp_println::println!("Unknown command"),
+        }
+    }
+
+    fn set_clock(&mut self, rtc_micros: u64) {
+        self.rtc.set_current_time_us(rtc_micros);
+        self.time_valid = true;
+        self.last_second = None;
+        self.redraw = true;
+    }
+
+    fn print_pending_records(&self) {
+        let pending = self.training.state().pending();
+        esp_println::println!("Pending records: {}", pending.len());
+        for record in pending {
+            esp_println::println!(
+                "{} | {:?} | confirmed: {:?}",
+                record.date,
+                record.kata,
+                record.confirmed_at
+            );
+        }
+    }
+
+    fn acknowledge(&mut self, date: NaiveDate) {
+        let result = block_on(self.training.acknowledge(&mut self.scratch, date));
+        match check_storage(result, "ACK") {
+            Ok(record) => {
+                esp_println::println!("Record {} acknowledged", record.date);
+                self.last_second = None;
+            }
+            Err(error) => esp_println::println!("ACK failed: {error:?}"),
+        }
+    }
+
+    /// Sample all buttons; returns whether CONFIRM was pressed.
+    fn poll_buttons(&mut self) -> bool {
+        let buttons = &mut self.buttons;
+        let levels = [
+            (ButtonId::Confirm, buttons.confirm.is_high()),
+            (ButtonId::Menu, buttons.menu.is_high()),
+            (ButtonId::Exit, buttons.exit.is_high()),
+            (ButtonId::Down, buttons.down.is_high()),
+            (ButtonId::Up, buttons.up.is_high()),
+        ];
+        let now_ms = self.rtc.time_since_power_up().as_millis();
+        let pressed = buttons
+            .bank
+            .pressed(levels, now_ms)
+            .expect("Monotonic clock moved backwards");
+        for id in &pressed {
+            esp_println::println!("{id:?} button pressed");
+            if matches!(id, ButtonId::Menu | ButtonId::Exit) {
+                self.redraw = true;
+            }
+        }
+        pressed.contains(&ButtonId::Confirm)
+    }
+
+    /// Advance the schedule once per second and handle confirmation.
+    ///
+    /// Returns the current time, or `None` while the clock is not set.
+    fn update_training(&mut self, confirm_pressed: bool) -> Option<DateTime<Utc>> {
+        if !self.time_valid {
+            return None;
+        }
+        let rtc_micros = self.rtc.current_time_us();
+        let now = clock::utc_from_rtc_micros(rtc_micros).expect("RTC timestamp out of range");
+        let second = clock::unix_secs_from_rtc_micros(rtc_micros);
+        if self.last_second != Some(second) {
+            self.advance_training(now);
+            self.last_second = Some(second);
+        }
+        if confirm_pressed && self.training_error.is_none() {
+            self.confirm_training(now);
+        }
+        Some(now)
+    }
+
+    fn advance_training(&mut self, now: DateTime<Utc>) {
+        let rng = &self.rng;
+        let kata = choose_kata(KATA, || rng.random()).expect("KATA is not empty");
+        let result = block_on(self.training.advance(&mut self.scratch, now, Some(kata)));
+        match check_storage(result, "Training") {
+            Ok(change) => {
+                if self.training_error.take().is_some() || change != Change::None {
+                    self.redraw = true;
+                }
+            }
+            Err(error) => {
+                if self.training_error != Some(error) {
+                    esp_println::println!("Cannot advance training: {error:?}");
+                    self.training_error = Some(error);
+                    self.redraw = true;
+                }
+            }
+        }
+    }
+
+    fn confirm_training(&mut self, now: DateTime<Utc>) {
+        let result = block_on(self.training.confirm(&mut self.scratch, now));
+        match check_storage(result, "Confirmation") {
+            Ok(Change::Confirmed) => self.redraw = true,
+            Ok(_) => {}
+            Err(error) => esp_println::println!("Confirmation ignored: {error:?}"),
+        }
+    }
+
+    /// Render the current screen, update the panel and put it to sleep.
+    fn refresh_display(&mut self, now: Option<DateTime<Utc>>) {
+        let screen = select_screen(
+            now,
+            self.training_error,
+            self.training.state().active(),
+            self.electricity_price.as_deref(),
+        );
+        draw_screen(&mut self.display, &screen).expect("Display rendering failed");
+        self.panel
+            .display_frame(self.display.buffer())
+            .expect("Display update failed");
+        let _ = self.panel.sleep();
+        self.redraw = false;
+    }
+
+    /// Seconds to pause after a redraw while resting before 07:00, if idle.
+    fn rest_pause(&self, now: Option<DateTime<Utc>>) -> Option<u64> {
+        let now = now?;
+        if self.training.state().active().is_some()
+            || self.training_error.is_some()
+            || self.uart.read_ready()
+        {
+            return None;
+        }
+        let secs = seconds_until_next_transition(now)?;
+        esp_println::println!("Entering low-power sleep for {secs}s until 07:00");
+        Some(secs.min(MAX_REST_SECS))
+    }
+}
+
+#[cfg(feature = "wifi")]
+impl App {
+    /// Connect with credentials saved in flash, if any.
+    fn connect_saved_wifi(&mut self) {
+        if !self.wifi.is_available() {
+            return;
+        }
+        if let Ok(Some(credentials)) =
+            block_on(self.training.load_wifi_credentials(&mut self.scratch))
+        {
+            esp_println::println!(
+                "Loaded saved Wi-Fi credentials from flash for SSID: {}",
+                credentials.ssid
+            );
+            self.wifi.submit(credentials);
+        }
+    }
+
+    /// Validate, save and submit the credentials staged with `SSID` and `PASSWORD`.
+    fn connect_staged_wifi(&mut self) {
+        let Some(credentials) = self.wifi.staged_credentials() else {
+            return;
+        };
+        match block_on(
+            self.training
+                .save_wifi_credentials(&mut self.scratch, &credentials),
+        ) {
+            Ok(()) => esp_println::println!("Saved Wi-Fi credentials to flash"),
+            Err(error) => esp_println::println!(
+                "Warning: Failed to save Wi-Fi credentials to flash: {error:?}"
+            ),
+        }
+        self.wifi.submit(credentials);
+    }
+
+    /// Apply results from the network task and hand it the next record to sync.
+    fn poll_network(&mut self) {
         if let Ok(unix_secs) = wireless::TIME_SYNC.try_receive() {
-            if let Some(micros) = unix_secs.checked_mul(1_000_000) {
-                if micros >= 946_684_800_000_000 {
-                    rtc.set_current_time_us(micros);
-                    time_valid = true;
-                    last_second = None;
-                    redraw = true;
-                    esp_println::println!("Clock synchronized via SNTP: {unix_secs}");
-                }
+            if let Some(rtc_micros) = clock::rtc_micros_from_unix_secs(unix_secs) {
+                self.set_clock(rtc_micros);
+                esp_println::println!("Clock synchronized via SNTP: {unix_secs}");
             }
         }
-
-        #[cfg(feature = "wifi")]
-        if let Ok(price_str) = wireless::PRICE_UPDATE.try_receive() {
-            if electricity_price.as_ref() != Some(&price_str) {
-                electricity_price = Some(price_str);
-                redraw = true;
+        if let Ok(price) = wireless::PRICE_UPDATE.try_receive() {
+            if self.electricity_price.as_ref() != Some(&price) {
+                self.electricity_price = Some(price);
+                self.redraw = true;
             }
         }
-
-        #[cfg(feature = "wifi")]
-        if let Ok(synced_date) = wireless::RECORD_SYNCED.try_receive() {
-            match block_on(training.acknowledge(&mut scratch, synced_date)) {
-                Ok(ack_record) => {
-                    esp_println::println!(
-                        "Record automatically acknowledged after Supabase sync: {}",
-                        ack_record.date
-                    );
-                }
-                Err(e) => {
-                    esp_println::println!("Failed to auto-ack synced record: {e:?}");
-                }
+        if let Ok(outcome) = wireless::RECORD_SYNC_RESULT.try_receive() {
+            self.sync_in_flight = false;
+            if let wireless::SyncOutcome::Synced(date) = outcome {
+                self.acknowledge(date);
             }
         }
-
-        #[cfg(feature = "wifi")]
-        if let Some(oldest_pending) = training.state().pending().first() {
-            let _ = wireless::RECORD_SYNC_REQUEST.try_send(oldest_pending.clone());
-        }
-
-        let millis = rtc.time_since_power_up().as_millis();
-        let event_conf = buttons
-            .sample(ButtonId::Confirm, btn_conf.is_high(), millis)
-            .expect("Monotonic clock moved backwards");
-        let event_menu = buttons
-            .sample(ButtonId::Menu, btn_menu.is_high(), millis)
-            .expect("Monotonic clock moved backwards");
-        let event_exit = buttons
-            .sample(ButtonId::Exit, btn_exit.is_high(), millis)
-            .expect("Monotonic clock moved backwards");
-        let event_down = buttons
-            .sample(ButtonId::Down, btn_down.is_high(), millis)
-            .expect("Monotonic clock moved backwards");
-        let event_up = buttons
-            .sample(ButtonId::Up, btn_up.is_high(), millis)
-            .expect("Monotonic clock moved backwards");
-
-        if event_menu == Some(Event::Pressed) {
-            esp_println::println!("MENU button pressed");
-            redraw = true;
-        }
-        if event_exit == Some(Event::Pressed) {
-            esp_println::println!("EXIT button pressed");
-            redraw = true;
-        }
-        if event_down == Some(Event::Pressed) {
-            esp_println::println!("DOWN button pressed");
-        }
-        if event_up == Some(Event::Pressed) {
-            esp_println::println!("UP button pressed");
-        }
-
-        if time_valid {
-            let seconds = rtc.current_time_us() / 1_000_000;
-            let now = DateTime::<Utc>::from_timestamp(
-                i64::try_from(seconds).expect("RTC timestamp overflow"),
-                0,
-            )
-            .expect("RTC timestamp out of range");
-            if last_second != Some(seconds) {
-                let count = u32::try_from(KATA.len()).expect("Too many kata");
-                let limit = u32::MAX - u32::MAX % count;
-                let selected = loop {
-                    let value = rng.random();
-                    if value < limit {
-                        break KATA[(value % count) as usize];
-                    }
-                };
-                match block_on(training.advance(&mut scratch, now, Some(selected))) {
-                    Ok(change) => {
-                        if training_error.take().is_some() || change != Change::None {
-                            redraw = true;
-                        }
-                    }
-                    Err(TransactionError::Training(error)) => {
-                        if training_error != Some(error) {
-                            esp_println::println!("Cannot advance training: {error:?}");
-                            training_error = Some(error);
-                            redraw = true;
-                        }
-                    }
-                    Err(TransactionError::Storage(error)) => {
-                        panic!("Training storage failed: {error:?}")
-                    }
-                    Err(TransactionError::RequiresReload) => {
-                        panic!("Training storage requires reload")
-                    }
-                }
-                last_second = Some(seconds);
+        if !self.sync_in_flight && mainichikatarenshu::supabase::CONFIGURED.is_some() {
+            if let Some(oldest) = self.training.state().pending().first() {
+                self.sync_in_flight = wireless::RECORD_SYNC_REQUEST
+                    .try_send(oldest.clone())
+                    .is_ok();
             }
-            if event_conf == Some(Event::Pressed) && training_error.is_none() {
-                match block_on(training.confirm(&mut scratch, now)) {
-                    Ok(Change::Confirmed) => redraw = true,
-                    Ok(_) => {}
-                    Err(TransactionError::Training(error)) => {
-                        esp_println::println!("Confirmation ignored: {error:?}")
-                    }
-                    Err(TransactionError::Storage(error)) => {
-                        panic!("Confirmation storage failed: {error:?}")
-                    }
-                    Err(TransactionError::RequiresReload) => {
-                        panic!("Training storage requires reload")
-                    }
-                }
-            }
-            if redraw {
-                DisplayManager::clear_and_prepare(&mut display).expect("Display clear failed");
-                if let Some(error) = training_error {
-                    let message = match error {
-                        TrainingError::QueueFull => "Queue full: LIST / ACK",
-                        TrainingError::ClockWentBackwards => "Clock moved backwards",
-                        _ => "Training error: see serial",
-                    };
-                    DisplayManager::show_centered_message(&mut display, message, None)
-                        .expect("Display rendering failed");
-                } else if let Some(record) = training.state().active() {
-                    let local = now.with_timezone(&chrono_tz::Europe::Helsinki);
-                    let status = if record.confirmed_at.is_some() {
-                        "Completed"
-                    } else {
-                        "Press confirm"
-                    };
-                    KataDisplayManager::show_kata_reminder(
-                        &mut display,
-                        &format!("{}", local.date_naive()),
-                        &format!("{:02}:{:02}", local.hour(), local.minute()),
-                        &record.kata,
-                        Some(status),
-                        electricity_price.as_deref(),
-                    )
-                    .expect("Display rendering failed");
-                } else {
-                    DisplayManager::show_centered_message(&mut display, "Rest until 07:00", None)
-                        .expect("Display rendering failed");
-                }
-                panel
-                    .display_frame(display.buffer())
-                    .expect("Display update failed");
-                let _ = panel.sleep();
-                redraw = false;
-
-                // If currently outside active hours (resting until 07:00) and no UART input is pending,
-                // enter power-saving sleep until the 07:00 transition
-                if training.state().active().is_none()
-                    && training_error.is_none()
-                    && !uart.read_ready()
-                {
-                    if let Some(sleep_secs) =
-                        mainichikatarenshu::schedule::duration_until_next_transition(now)
-                    {
-                        esp_println::println!(
-                            "Entering low-power sleep for {sleep_secs}s until 07:00"
-                        );
-                        // During sleep, delay/sleep for the remaining duration (in chunks of up to 60s to allow UART interrupts)
-                        let sleep_duration = core::cmp::min(sleep_secs, 60);
-                        #[cfg(not(feature = "wifi"))]
-                        delay.delay_millis(sleep_duration as u32 * 1000);
-                        #[cfg(feature = "wifi")]
-                        embassy_time::Timer::after(embassy_time::Duration::from_secs(
-                            sleep_duration,
-                        ))
-                        .await;
-                    }
-                }
-            }
-        } else if redraw {
-            DisplayManager::clear_and_prepare(&mut display).expect("Display clear failed");
-            DisplayManager::show_centered_message(&mut display, "Set time via serial", None)
-                .expect("Display rendering failed");
-            panel
-                .display_frame(display.buffer())
-                .expect("Display update failed");
-            let _ = panel.sleep();
-            redraw = false;
         }
-        #[cfg(not(feature = "wifi"))]
-        delay.delay_millis(25);
-        #[cfg(feature = "wifi")]
-        embassy_time::Timer::after_millis(25).await;
     }
 }

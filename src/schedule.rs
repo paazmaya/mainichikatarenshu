@@ -15,8 +15,11 @@ pub enum Phase {
 /// Current phase and the next transition, represented as UTC.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Schedule {
+    /// Whether training is available now.
     pub phase: Phase,
+    /// Helsinki-local calendar date of `now`.
     pub local_date: NaiveDate,
+    /// The next 07:00 or 23:00 Helsinki boundary.
     pub next_transition: DateTime<Utc>,
 }
 
@@ -27,7 +30,7 @@ pub struct ScheduleError;
 /// Compute the schedule using a trusted UTC timestamp.
 ///
 /// The caller must not pass an uninitialized or otherwise untrusted clock.
-pub fn at(now: DateTime<Utc>) -> Result<Schedule, ScheduleError> {
+pub fn schedule_at(now: DateTime<Utc>) -> Result<Schedule, ScheduleError> {
     let local = now.with_timezone(&Helsinki);
     let date = local.date_naive();
     let hour = local.hour();
@@ -51,10 +54,11 @@ pub fn at(now: DateTime<Utc>) -> Result<Schedule, ScheduleError> {
     })
 }
 
-/// Calculate duration in seconds until the next transition from `now`.
-/// Returns `None` if `now` is past the transition or schedule calculation fails.
-pub fn duration_until_next_transition(now: DateTime<Utc>) -> Option<u64> {
-    let sched = at(now).ok()?;
+/// Whole seconds from `now` until the next 07:00 or 23:00 Helsinki boundary.
+///
+/// Returns `None` if the schedule cannot be computed.
+pub fn seconds_until_next_transition(now: DateTime<Utc>) -> Option<u64> {
+    let sched = schedule_at(now).ok()?;
     let diff = sched.next_transition.signed_duration_since(now);
     let secs = diff.num_seconds();
     if secs > 0 {
@@ -77,13 +81,13 @@ mod tests {
 
     #[test]
     fn transitions_use_local_time_in_winter_and_summer() {
-        let before = at(utc(2026, 1, 5, 4, 59)).unwrap();
+        let before = schedule_at(utc(2026, 1, 5, 4, 59)).unwrap();
         assert_eq!(before.phase, Phase::Inactive);
         assert_eq!(before.next_transition, utc(2026, 1, 5, 5, 0));
-        let active = at(utc(2026, 7, 5, 4, 0)).unwrap();
+        let active = schedule_at(utc(2026, 7, 5, 4, 0)).unwrap();
         assert_eq!(active.phase, Phase::Active);
         assert_eq!(active.next_transition, utc(2026, 7, 5, 20, 0));
-        let night = at(utc(2026, 7, 5, 20, 0)).unwrap();
+        let night = schedule_at(utc(2026, 7, 5, 20, 0)).unwrap();
         assert_eq!(night.phase, Phase::Inactive);
         assert_eq!(night.next_transition, utc(2026, 7, 6, 4, 0));
     }
@@ -93,19 +97,19 @@ mod tests {
         let spring = utc(2026, 3, 28, 21, 0);
         let autumn = utc(2026, 10, 24, 20, 0);
         assert_eq!(
-            at(spring).unwrap().next_transition - spring,
+            schedule_at(spring).unwrap().next_transition - spring,
             Duration::hours(7)
         );
         assert_eq!(
-            at(autumn).unwrap().next_transition - autumn,
+            schedule_at(autumn).unwrap().next_transition - autumn,
             Duration::hours(9)
         );
     }
 
     #[test]
-    fn test_duration_until_next_transition() {
+    fn seconds_until_next_transition_counts_to_morning() {
         let night = utc(2026, 7, 5, 20, 0); // 23:00 Helsinki
-        let secs = duration_until_next_transition(night).unwrap();
+        let secs = seconds_until_next_transition(night).unwrap();
         assert_eq!(secs, 8 * 3600); // 8 hours until 07:00 (04:00 UTC)
     }
 }

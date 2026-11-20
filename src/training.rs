@@ -14,8 +14,11 @@ pub const MAX_PENDING_RECORDS: usize = 32;
 /// A day's selected kata and its optional confirmation time.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Record {
+    /// Helsinki-local date of the training day.
     pub date: NaiveDate,
+    /// Name of the selected kata.
     pub kata: String<MAX_KATA_BYTES>,
+    /// When the user confirmed practising the kata, if they did.
     pub confirmed_at: Option<DateTime<Utc>>,
 }
 
@@ -31,30 +34,44 @@ pub struct TrainingState {
 /// An event requiring the caller to update its display or persist state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Change {
+    /// Nothing changed; no persistence or redraw is needed.
     None,
+    /// A new training day started.
     Started,
+    /// The active day ended and was queued for synchronization.
     Finished,
+    /// The previous day was queued and a new day started.
     FinishedAndStarted,
+    /// The active kata was confirmed.
     Confirmed,
 }
 
 /// The request could not be applied; the state remains unchanged.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Error {
+    /// The schedule could not be computed for the given time.
     InvalidSchedule,
+    /// The time is earlier than the last observed time.
     ClockWentBackwards,
+    /// A new day started but no kata was supplied.
     MissingKata,
+    /// The kata name is blank or longer than [`MAX_KATA_BYTES`].
     InvalidKata,
+    /// The pending queue holds [`MAX_PENDING_RECORDS`] records.
     QueueFull,
+    /// There is no confirmable training right now.
     NoActiveTraining,
+    /// The date is not that of the oldest pending record.
     OutOfOrderAcknowledgement,
 }
 
 impl TrainingState {
+    /// The record of the current training day, if one is active.
     pub fn active(&self) -> Option<&Record> {
         self.active.as_ref()
     }
 
+    /// Finished records awaiting synchronization, oldest first.
     pub fn pending(&self) -> &[Record] {
         &self.pending
     }
@@ -72,7 +89,7 @@ impl TrainingState {
 
     fn advance_inner(&mut self, now: DateTime<Utc>, kata: Option<&str>) -> Result<Change, Error> {
         self.check_time(now)?;
-        let schedule = schedule::at(now).map_err(|_| Error::InvalidSchedule)?;
+        let schedule = schedule::schedule_at(now).map_err(|_| Error::InvalidSchedule)?;
         let finish = self.active.as_ref().is_some_and(|active| {
             active.date < schedule.local_date
                 || (active.date == schedule.local_date && schedule.phase == Phase::Inactive)
@@ -119,7 +136,7 @@ impl TrainingState {
     /// Confirm the selected kata once during its active local day.
     pub fn confirm(&mut self, now: DateTime<Utc>) -> Result<Change, Error> {
         self.check_time(now)?;
-        let schedule = schedule::at(now).map_err(|_| Error::InvalidSchedule)?;
+        let schedule = schedule::schedule_at(now).map_err(|_| Error::InvalidSchedule)?;
         let active = self.active.as_mut().ok_or(Error::NoActiveTraining)?;
         if schedule.phase != Phase::Active || active.date != schedule.local_date {
             return Err(Error::NoActiveTraining);
@@ -155,6 +172,21 @@ impl TrainingState {
     }
 }
 
+/// Pick a kata uniformly at random.
+///
+/// `random` returns uniformly distributed `u32` values; values that would bias
+/// the modulo are rejected and drawn again. Returns `None` for an empty list.
+pub fn choose_kata<'a>(names: &[&'a str], mut random: impl FnMut() -> u32) -> Option<&'a str> {
+    let count = u32::try_from(names.len()).ok().filter(|count| *count > 0)?;
+    let limit = u32::MAX - u32::MAX % count;
+    loop {
+        let value = random();
+        if value < limit {
+            return Some(names[(value % count) as usize]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +196,16 @@ mod tests {
         Utc.with_ymd_and_hms(2026, 1, day, hour, 0, 0)
             .single()
             .unwrap()
+    }
+
+    #[test]
+    fn choose_kata_is_unbiased_and_handles_empty_lists() {
+        assert_eq!(choose_kata(&[], || 0), None);
+        let names = ["A", "B", "C"];
+        assert_eq!(choose_kata(&names, || 4), Some("B"));
+        // u32::MAX % 3 == 0, so the limit is u32::MAX and u32::MAX itself is rejected.
+        let mut values = [u32::MAX, 2].into_iter();
+        assert_eq!(choose_kata(&names, || values.next().unwrap()), Some("C"));
     }
 
     #[test]

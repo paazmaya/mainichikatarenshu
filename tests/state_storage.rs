@@ -181,6 +181,7 @@ fn full_queue_recovers_after_acknowledgement_and_reload() {
 }
 
 #[test]
+#[allow(clippy::reversed_empty_ranges)]
 fn invalid_flash_ranges_are_rejected() {
     assert!(StateStore::new(BlockingAsync::new(Flash::new()), 8192..4096).is_err());
     assert!(StateStore::new(BlockingAsync::new(Flash::new()), 0..69632).is_err());

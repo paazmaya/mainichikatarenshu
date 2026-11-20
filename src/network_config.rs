@@ -3,19 +3,26 @@
 use heapless::String;
 use serde::{Deserialize, Serialize};
 
+/// Validated WPA2-Personal station credentials.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Credentials {
+    /// Network name: 1–32 printable ASCII bytes.
     pub ssid: String<32>,
+    /// Passphrase: 8–63 printable ASCII bytes.
     pub password: String<63>,
 }
 
+/// Which credential failed validation.
 #[derive(Debug, Eq, PartialEq)]
 pub enum CredentialError {
+    /// The SSID is empty, too long or not printable ASCII.
     InvalidSsid,
+    /// The passphrase is not 8–63 printable ASCII bytes.
     InvalidPassword,
 }
 
 impl Credentials {
+    /// Validate and copy `ssid` and `password`.
     pub fn new(ssid: &str, password: &str) -> Result<Self, CredentialError> {
         if ssid.is_empty() || ssid.len() > 32 || !ssid.bytes().all(|b| (0x20..=0x7e).contains(&b)) {
             return Err(CredentialError::InvalidSsid);
