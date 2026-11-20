@@ -3,9 +3,9 @@
 //! This module provides high-level text rendering functions that handle
 //! multiline text automatically, positioning, and styling.
 
-use crate::ssd1680::graphics::{Display, DisplayRotation};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use crowpanel_ssd1680::Display;
 use embedded_graphics::mono_font::{iso_8859_15::FONT_5X8, MonoFont, MonoTextStyle};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::{prelude::*, text::Text};
@@ -99,7 +99,7 @@ impl TextRenderer {
     /// # Examples
     ///
     /// ```rust
-    /// use ssd1680::text::{TextRenderer, TextConfig};
+    /// use mainichikatarenshu::text::{TextRenderer, TextConfig};
     /// use embedded_graphics::pixelcolor::BinaryColor;
     ///
     /// let config = TextConfig::new(&FONT_5X8)
@@ -348,7 +348,6 @@ impl TextRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ssd1680::graphics::Display2in13;
     use embedded_graphics::mock_display::MockDisplay;
     use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
 

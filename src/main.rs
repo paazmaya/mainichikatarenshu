@@ -6,6 +6,7 @@ extern crate alloc;
 use alloc::format;
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use core::panic::PanicInfo;
+use crowpanel_ssd1680::{Display, Display2in9, Ssd1680};
 use embassy_embedded_hal::adapter::BlockingAsync;
 use embassy_futures::block_on;
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -23,14 +24,10 @@ use esp_storage::FlashStorage;
 use heapless::String;
 use mainichikatarenshu::{
     buttons::{ButtonBank, ButtonId, Event},
+    display_utils::DisplayManager,
     kata::KATA,
     kata_display::KataDisplayManager,
     partitions::training_partition,
-    ssd1680::{
-        display_utils::DisplayManager,
-        driver::Ssd1680,
-        graphics::{Display, Display2in13},
-    },
     storage::{PersistentTraining, StateStore, TransactionError},
     training::{Change, Error as TrainingError},
 };
@@ -93,13 +90,13 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let spi = ExclusiveDevice::new(spi, cs, Delay::new()).expect("SPI CS initialization failed");
     let mut panel =
         Ssd1680::new(spi, busy, dc, rst, Delay::new()).expect("Display initialization failed");
-    let mut display = Display2in13::new();
+    let mut display = Display2in9::new();
 
     if KATA.is_empty() {
         DisplayManager::show_centered_message(&mut display, "kata.yaml missing", None)
             .expect("Display rendering failed");
         panel
-            .write_buffer_and_update(display.buffer())
+            .display_frame(display.buffer())
             .expect("Display update failed");
         panic!("Configure kata.yaml and rebuild the firmware");
     }
@@ -479,7 +476,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                         .expect("Display rendering failed");
                 }
                 panel
-                    .write_buffer_and_update(display.buffer())
+                    .display_frame(display.buffer())
                     .expect("Display update failed");
                 let _ = panel.sleep();
                 redraw = false;
@@ -513,7 +510,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
             DisplayManager::show_centered_message(&mut display, "Set time via serial", None)
                 .expect("Display rendering failed");
             panel
-                .write_buffer_and_update(display.buffer())
+                .display_frame(display.buffer())
                 .expect("Display update failed");
             let _ = panel.sleep();
             redraw = false;

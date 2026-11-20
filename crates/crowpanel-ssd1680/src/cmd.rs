@@ -1,9 +1,8 @@
-/// SSD1680 command constants
-///
-/// This struct contains all the command codes for the SSD1680 e-paper display controller.
-/// Commands are organized by their function and documented according to the SSD1680 datasheet.
+//! SSD1680 command codes, documented after the datasheet command table.
+
+/// SSD1680 command codes.
 pub struct Cmd;
-#[allow(dead_code)]
+
 impl Cmd {
     /// Driver Output Control (0x01)
     ///
@@ -60,7 +59,7 @@ impl Cmd {
     /// - D[23:16]: Phase3 soft-start timing and driving strength. Default: 17h
     ///
     /// Controls the booster's soft start behavior to ensure proper power initialization.
-    pub const BOOST_SOFT_START_CONTROL: u8 = 0xC;
+    pub const BOOST_SOFT_START_CONTROL: u8 = 0x0C;
 
     /// Deep Sleep Mode (0x10)
     ///

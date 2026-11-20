@@ -125,7 +125,7 @@ existing device without first checking its flash layout and backing up its data.
 
 ### Previously implemented components
 
-- **Custom SSD1680 E-Paper Driver** - Fully functional Rust driver for the CrowPanel ESP32 2.9" display
+- **Custom SSD1680 E-Paper Driver** - Fully functional Rust driver for the CrowPanel ESP32 2.9" display, in its own workspace crate [`crates/crowpanel-ssd1680`](crates/crowpanel-ssd1680/README.md)
 - **Display Rendering** - Text and image display using `embedded-graphics`
 - **RTC Integration** - Date/time tracking with ESP32 RTC
 - **Logo Display** - Build-time image conversion and display
@@ -623,8 +623,11 @@ The project is configured with both library and binary targets to enable differe
 #### Local Development
 
 ```bash
-# Unit tests - Pure logic (no hardware required)
-cargo test --lib --features test-utils
+# Unit tests - Pure logic (no hardware required), including the driver crate
+cargo +stable test --workspace --lib --features test-utils --target <host-triple>
+
+# Driver crate only
+cargo +stable test -p crowpanel-ssd1680 --target <host-triple>
 
 # Integration tests - With mock displays
 cargo test --test unit_tests --features test-utils
@@ -644,25 +647,22 @@ The GitHub Actions workflow runs tests in two stages:
 2. **Test Stage** - Uses standard Rust toolchain for hardware-independent tests
 
 ```yaml
-- name: Run unit tests
-  run: cargo test --lib --features test-utils --target x86_64-unknown-linux-gnu
-
-- name: Run integration tests
-  run: cargo test --test unit_tests --features test-utils --target x86_64-unknown-linux-gnu
+- name: Run host tests
+  run: cargo +stable test --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu
 ```
 
 ### 📋 What Gets Tested
 
 #### ✅ Hardware-Independent Tests
 
-**Text Processing (`src/ssd1680/text.rs`)**
+**Text Processing (`src/text.rs`)**
 
 - Text wrapping algorithms
 - Width measurement calculations
 - Font rendering configurations
 - Alignment logic
 
-**Color Conversions (`src/ssd1680/color.rs`)**
+**Color Conversions (`crates/crowpanel-ssd1680/src/color.rs`)**
 
 - Bit value calculations
 - Byte value conversions
@@ -674,13 +674,13 @@ The GitHub Actions workflow runs tests in two stages:
 - Data structure operations
 - State management
 
-**Display Utilities (`src/ssd1680/display_utils.rs`)**
+**Display Utilities (`src/display_utils.rs`)**
 
 - Configuration presets
 - Layout calculations
 - Text positioning logic
 
-**Graphics Calculations (`src/ssd1680/graphics.rs`)**
+**Graphics Calculations (`crates/crowpanel-ssd1680/src/graphics.rs`)**
 
 - Rotation mathematics
 - Buffer operations
@@ -714,7 +714,7 @@ mod tests {
 
 ```rust
 use embedded_graphics::mock_display::MockDisplay;
-use mainichikatarenshu::ssd1680::text::TextRenderer;
+use mainichikatarenshu::text::TextRenderer;
 
 #[test]
 fn test_complete_rendering_pipeline() {

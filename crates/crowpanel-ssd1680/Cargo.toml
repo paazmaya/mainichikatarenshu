@@ -1,0 +1,18 @@
+[package]
+name = "crowpanel-ssd1680"
+description = "no_std SSD1680 e-paper driver for the CrowPanel ESP32 2.9\" (128x296) display"
+version = "0.1.0"
+authors = ["Juga Paazmaya <paazmaya@yahoo.com>"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/paazmaya/mainichikatarenshu"
+keywords = ["ssd1680", "e-paper", "epd", "embedded-graphics", "no-std"]
+categories = ["embedded", "no-std", "hardware-support"]
+publish = false
+rust-version = "1.95"
+
+[dependencies]
+display-interface = "0.5.0"
+embedded-graphics = "0.8.2"
+embedded-hal = "1.0.0"
+log = "0.4.35"

@@ -3,11 +3,10 @@
 //! This module contains display functions specific to the kata reminder application,
 //! separated from the generic display utilities to improve testability and maintainability.
 
-use crate::ssd1680::display_utils::{presets, DisplayManager};
-use crate::ssd1680::graphics::Display2in13;
-use crate::ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
+use crate::display_utils::{presets, DisplayManager};
+use crate::text::{TextAlignment, TextConfig, TextRenderer};
 use alloc::format;
-use display_interface::DisplayError;
+use crowpanel_ssd1680::{Display2in9, DisplayError};
 use embedded_graphics::pixelcolor::BinaryColor;
 
 /// Kata display manager for application-specific display operations
@@ -31,7 +30,7 @@ impl KataDisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_kata_reminder(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         date_str: &str,
         time_str: &str,
         kata_name: &str,
@@ -90,7 +89,7 @@ impl KataDisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_completion_screen(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         kata_name: &str,
         completion_time: &str,
     ) -> Result<(), DisplayError> {
@@ -124,7 +123,7 @@ impl KataDisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_motivational_message(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         message: &str,
     ) -> Result<(), DisplayError> {
         DisplayManager::clear_and_prepare(display)?;
@@ -148,7 +147,7 @@ impl KataDisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_training_stats(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         stats: &TrainingStats,
     ) -> Result<(), DisplayError> {
         DisplayManager::clear_and_prepare(display)?;
@@ -182,7 +181,7 @@ impl KataDisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_menu(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         title: &str,
         options: &[&str],
         selected_index: usize,
@@ -232,7 +231,7 @@ impl KataDisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_message(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         title: &str,
         message: &str,
         is_error: bool,
@@ -312,11 +311,11 @@ impl TrainingStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ssd1680::graphics::Display;
     use alloc::vec::Vec;
+    use crowpanel_ssd1680::Display;
 
-    fn render(draw: impl FnOnce(&mut Display2in13) -> Result<(), DisplayError>) -> Vec<u8> {
-        let mut display = Display2in13::new();
+    fn render(draw: impl FnOnce(&mut Display2in9) -> Result<(), DisplayError>) -> Vec<u8> {
+        let mut display = Display2in9::new();
         draw(&mut display).unwrap();
         display.buffer().to_vec()
     }
@@ -360,7 +359,7 @@ mod tests {
     #[test]
     fn screens_replace_previous_content() {
         let stats = TrainingStats::new(10, 3, 5, 7);
-        type Screen<'a> = &'a dyn Fn(&mut Display2in13) -> Result<(), DisplayError>;
+        type Screen<'a> = &'a dyn Fn(&mut Display2in9) -> Result<(), DisplayError>;
         let screens: [Screen; 5] = [
             &|d| KataDisplayManager::show_completion_screen(d, "Bassai", "06:30"),
             &|d| KataDisplayManager::show_motivational_message(d, "Keep going"),

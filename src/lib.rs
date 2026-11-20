@@ -12,15 +12,16 @@ extern crate alloc;
 
 // Re-export the main modules for testing
 pub mod buttons;
+pub mod display_utils;
 pub mod electricity;
 pub mod kata_display;
 pub mod network_config;
 pub mod partitions;
 pub mod schedule;
 pub mod sntp;
-pub mod ssd1680;
 pub mod storage;
 pub mod supabase;
+pub mod text;
 pub mod training;
 pub mod wpa2;
 
@@ -30,7 +31,6 @@ pub mod kata {
 }
 
 // Re-export main types for easier testing
+pub use crowpanel_ssd1680::{Color, Display2in9};
 pub use kata_display::TrainingStats;
-pub use ssd1680::color::Color;
-pub use ssd1680::graphics::Display2in13;
-pub use ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
+pub use text::{TextAlignment, TextConfig, TextRenderer};

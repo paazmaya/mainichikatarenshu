@@ -55,13 +55,13 @@ jobs:
           toolchain: stable
 
       - name: Run host tests
-        run: cargo +stable test --lib --tests --features test-utils --target x86_64-unknown-linux-gnu
+        run: cargo +stable test --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu
 
       - name: Check formatting
         run: cargo fmt --all -- --check --color always
 
-      - name: Run clippy on host library
-        run: cargo +stable clippy --lib --features test-utils --target x86_64-unknown-linux-gnu
+      - name: Run clippy on host libraries
+        run: cargo +stable clippy --workspace --lib --features test-utils --target x86_64-unknown-linux-gnu
 
       - name: Archive artifact
         uses: chainguard-actions/actions-upload-artifact@c91615377dcc230c6b156542d25044f9b8d80dd8 # v7.0.2

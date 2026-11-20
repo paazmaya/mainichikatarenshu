@@ -3,10 +3,8 @@
 //! This module provides reusable utilities for common display operations,
 //! reducing code duplication and improving maintainability.
 
-use crate::ssd1680::graphics::{Display, Display2in13, DisplayRotation};
-use crate::ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
-use crate::ssd1680::{HEIGHT, WIDTH};
-use display_interface::DisplayError;
+use crate::text::{TextAlignment, TextConfig, TextRenderer};
+use crowpanel_ssd1680::{Display, Display2in9, DisplayError, DisplayRotation, HEIGHT, WIDTH};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Primitive};
 use embedded_graphics::Drawable;
@@ -23,8 +21,8 @@ impl DisplayManager {
     /// # Returns
     ///
     /// A new display buffer ready for drawing
-    pub fn create_display() -> Display2in13 {
-        let mut display = Display2in13::new();
+    pub fn create_display() -> Display2in9 {
+        let mut display = Display2in9::new();
 
         // Set default rotation to match physical display orientation
         display.set_rotation(DisplayRotation::Rotate270);
@@ -44,7 +42,7 @@ impl DisplayManager {
     /// # Returns
     ///
     /// The cleared display buffer (for chaining)
-    pub fn clear_and_prepare(display: &mut Display2in13) -> Result<(), DisplayError> {
+    pub fn clear_and_prepare(display: &mut Display2in9) -> Result<(), DisplayError> {
         // Clear to white (Off = white for this display)
         display.clear(BinaryColor::Off)?;
         Ok(())
@@ -66,7 +64,7 @@ impl DisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_status_message(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         message: &str,
         config: Option<TextConfig>,
     ) -> Result<(), DisplayError> {
@@ -96,7 +94,7 @@ impl DisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_title_and_content(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         title: &str,
         content: &str,
         config: Option<TextConfig>,
@@ -139,7 +137,7 @@ impl DisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_centered_message(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         message: &str,
         config: Option<TextConfig>,
     ) -> Result<(), DisplayError> {
@@ -178,7 +176,7 @@ impl DisplayManager {
     ///
     /// Result indicating success or failure
     pub fn show_datetime_status(
-        display: &mut Display2in13,
+        display: &mut Display2in9,
         date_str: &str,
         time_str: &str,
         status_msg: Option<&str>,
@@ -233,7 +231,7 @@ impl DisplayManager {
     /// # Returns
     ///
     /// Result indicating success or failure
-    pub fn create_test_pattern(display: &mut Display2in13) -> Result<(), DisplayError> {
+    pub fn create_test_pattern(display: &mut Display2in9) -> Result<(), DisplayError> {
         use embedded_graphics::mono_font::iso_8859_15::FONT_5X8;
         use embedded_graphics::primitives::{Line, PrimitiveStyle};
 
@@ -323,7 +321,7 @@ mod tests {
 
     #[test]
     fn centered_message_draws_within_display() {
-        let mut display = Display2in13::new();
+        let mut display = Display2in9::new();
         DisplayManager::show_centered_message(&mut display, "Setup required", None).unwrap();
         let changed_columns: alloc::vec::Vec<_> = display
             .buffer()
@@ -338,9 +336,9 @@ mod tests {
     }
 
     fn render(
-        draw: impl FnOnce(&mut Display2in13) -> Result<(), DisplayError>,
+        draw: impl FnOnce(&mut Display2in9) -> Result<(), DisplayError>,
     ) -> alloc::vec::Vec<u8> {
-        let mut display = Display2in13::new();
+        let mut display = Display2in9::new();
         draw(&mut display).unwrap();
         display.buffer().to_vec()
     }

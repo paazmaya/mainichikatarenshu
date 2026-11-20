@@ -7,13 +7,11 @@ use embedded_graphics::pixelcolor::BinaryColor;
 
 // Import only the modules we want to test without hardware
 use mainichikatarenshu::kata_display::TrainingStats;
-use mainichikatarenshu::ssd1680::color::Color;
-use mainichikatarenshu::ssd1680::graphics::Display2in13;
-use mainichikatarenshu::ssd1680::text::{TextAlignment, TextConfig, TextRenderer};
+use mainichikatarenshu::{Color, Display2in9, TextAlignment, TextConfig, TextRenderer};
 
 #[test]
 fn test_text_rendering_without_hardware() {
-    let mut display = Display2in13::bw();
+    let mut display = Display2in9::new();
 
     // Test single line text
     let config = TextConfig::default();
@@ -24,7 +22,7 @@ fn test_text_rendering_without_hardware() {
 
 #[test]
 fn test_multiline_text_without_hardware() {
-    let mut display = Display2in13::bw();
+    let mut display = Display2in9::new();
 
     let multiline_text = "Line 1\nLine 2\nLine 3";
     let config = TextConfig::default();
@@ -45,7 +43,7 @@ fn test_multiline_text_without_hardware() {
 
 #[test]
 fn test_text_alignment_without_hardware() {
-    let mut display = Display2in13::bw();
+    let mut display = Display2in9::new();
 
     let alignments = [
         TextAlignment::Left,
@@ -64,25 +62,17 @@ fn test_text_alignment_without_hardware() {
 #[test]
 fn test_color_conversions() {
     // Test color bit values
-    assert_eq!(
-        Color::White.get_bit_value(),
-        1,
-        "White should be bit value 1"
-    );
-    assert_eq!(
-        Color::Black.get_bit_value(),
-        0,
-        "Black should be bit value 0"
-    );
+    assert_eq!(Color::White.bit_value(), 1, "White should be bit value 1");
+    assert_eq!(Color::Black.bit_value(), 0, "Black should be bit value 0");
 
     // Test color byte values
     assert_eq!(
-        Color::White.get_byte_value(),
+        Color::White.byte_value(),
         0xFF,
         "White should be byte value 0xFF"
     );
     assert_eq!(
-        Color::Black.get_byte_value(),
+        Color::Black.byte_value(),
         0x00,
         "Black should be byte value 0x00"
     );
