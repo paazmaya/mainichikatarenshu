@@ -116,6 +116,22 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let mut training =
         block_on(PersistentTraining::load(store, &mut scratch)).expect("Cannot load training data");
 
+    #[cfg(feature = "wifi")]
+    let mut wifi_submitted = false;
+    #[cfg(feature = "wifi")]
+    if wifi_available {
+        if let Ok(Some(saved_creds)) = block_on(training.load_wifi_credentials(&mut scratch)) {
+            esp_println::println!(
+                "Loaded saved Wi-Fi credentials from flash for SSID: {}",
+                saved_creds.ssid
+            );
+            if wireless::CREDENTIALS.try_send(saved_creds).is_ok() {
+                wifi_submitted = true;
+                esp_println::println!("Connecting to saved Wi-Fi network");
+            }
+        }
+    }
+
     let mut uart = Uart::new(peripherals.UART0, UartConfig::default())
         .expect("UART configuration failed")
         .with_rx(peripherals.GPIO44)
@@ -246,16 +262,28 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
                                     &wifi_ssid,
                                     &wifi_password,
                                 ) {
-                                    Ok(credentials) => match wireless::CREDENTIALS
-                                        .try_send(credentials)
-                                    {
-                                        Ok(()) => {
-                                            wifi_submitted = true;
-                                            wifi_password.clear();
-                                            esp_println::println!("Wi-Fi connection requested");
+                                    Ok(credentials) => {
+                                        if let Err(e) = block_on(
+                                            training
+                                                .save_wifi_credentials(&mut scratch, &credentials),
+                                        ) {
+                                            esp_println::println!("Warning: Failed to save Wi-Fi credentials to flash: {e:?}");
+                                        } else {
+                                            esp_println::println!(
+                                                "Saved Wi-Fi credentials to flash"
+                                            );
                                         }
-                                        Err(_) => esp_println::println!("Wi-Fi request queue full"),
-                                    },
+                                        match wireless::CREDENTIALS.try_send(credentials) {
+                                            Ok(()) => {
+                                                wifi_submitted = true;
+                                                wifi_password.clear();
+                                                esp_println::println!("Wi-Fi connection requested");
+                                            }
+                                            Err(_) => {
+                                                esp_println::println!("Wi-Fi request queue full")
+                                            }
+                                        }
+                                    }
                                     Err(error) => esp_println::println!(
                                         "Invalid Wi-Fi configuration: {error:?}"
                                     ),

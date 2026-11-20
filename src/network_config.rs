@@ -1,7 +1,9 @@
-//! Validation for RAM-only Wi-Fi station provisioning.
+//! Validation and types for Wi-Fi station provisioning.
 
 use heapless::String;
+use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Credentials {
     pub ssid: String<32>,
     pub password: String<63>,

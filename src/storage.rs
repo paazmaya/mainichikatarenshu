@@ -13,10 +13,13 @@ use sequential_storage::{
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::network_config::Credentials;
 use crate::training::{Change, Error as TrainingError, Record, TrainingState};
 
 const STATE_KEY: u8 = 1;
 const STATE_VERSION: u8 = 1;
+const WIFI_CREDENTIALS_KEY: u8 = 2;
+const WIFI_CREDENTIALS_VERSION: u8 = 1;
 
 #[derive(Deserialize, Serialize)]
 struct Snapshot {
@@ -25,6 +28,14 @@ struct Snapshot {
 }
 
 impl<'a> sequential_storage::map::PostcardValue<'a> for Snapshot {}
+
+#[derive(Deserialize, Serialize)]
+struct WifiSnapshot {
+    version: u8,
+    credentials: Credentials,
+}
+
+impl<'a> sequential_storage::map::PostcardValue<'a> for WifiSnapshot {}
 
 #[derive(Debug)]
 pub enum StoreConfigError {
@@ -136,6 +147,23 @@ impl<F: NorFlash> PersistentTraining<F> {
         Ok(record)
     }
 
+    /// Load stored Wi-Fi credentials from the underlying store.
+    pub async fn load_wifi_credentials(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<Option<Credentials>, StoreError<F::Error>> {
+        self.store.load_wifi_credentials(buffer).await
+    }
+
+    /// Save Wi-Fi credentials to the underlying store.
+    pub async fn save_wifi_credentials(
+        &mut self,
+        buffer: &mut [u8],
+        credentials: &Credentials,
+    ) -> Result<(), StoreError<F::Error>> {
+        self.store.save_wifi_credentials(buffer, credentials).await
+    }
+
     pub fn into_store(self) -> StateStore<F> {
         self.store
     }
@@ -192,6 +220,41 @@ impl<F: NorFlash> StateStore<F> {
         };
         self.map
             .store_item(buffer, &STATE_KEY, &snapshot)
+            .await
+            .map_err(StoreError::Flash)
+    }
+
+    /// Load stored Wi-Fi credentials, or `None` if not stored.
+    pub async fn load_wifi_credentials(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<Option<Credentials>, StoreError<F::Error>> {
+        let snapshot: Option<WifiSnapshot> = self
+            .map
+            .fetch_item(buffer, &WIFI_CREDENTIALS_KEY)
+            .await
+            .map_err(StoreError::Flash)?;
+        match snapshot {
+            None => Ok(None),
+            Some(snapshot) if snapshot.version == WIFI_CREDENTIALS_VERSION => {
+                Ok(Some(snapshot.credentials))
+            }
+            Some(snapshot) => Err(StoreError::UnsupportedVersion(snapshot.version)),
+        }
+    }
+
+    /// Store Wi-Fi credentials to flash.
+    pub async fn save_wifi_credentials(
+        &mut self,
+        buffer: &mut [u8],
+        credentials: &Credentials,
+    ) -> Result<(), StoreError<F::Error>> {
+        let snapshot = WifiSnapshot {
+            version: WIFI_CREDENTIALS_VERSION,
+            credentials: credentials.clone(),
+        };
+        self.map
+            .store_item(buffer, &WIFI_CREDENTIALS_KEY, &snapshot)
             .await
             .map_err(StoreError::Flash)
     }

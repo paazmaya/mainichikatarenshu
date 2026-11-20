@@ -186,3 +186,32 @@ fn invalid_flash_ranges_are_rejected() {
     assert!(StateStore::new(BlockingAsync::new(Flash::new()), 0..69632).is_err());
     assert!(StateStore::new(BlockingAsync::new(Flash::new()), 1..8192).is_err());
 }
+
+#[test]
+fn wifi_credentials_persist_and_reload() {
+    use mainichikatarenshu::network_config::Credentials;
+
+    let store = StateStore::new(BlockingAsync::new(Flash::new()), 0..65536).unwrap();
+    let mut buffer = [0; 4096];
+    let mut app = block_on(PersistentTraining::load(store, &mut buffer)).unwrap();
+
+    assert_eq!(
+        block_on(app.load_wifi_credentials(&mut buffer)).unwrap(),
+        None
+    );
+
+    let creds = Credentials::new("MyHomeNetwork", "supersecret123").unwrap();
+    block_on(app.save_wifi_credentials(&mut buffer, &creds)).unwrap();
+
+    assert_eq!(
+        block_on(app.load_wifi_credentials(&mut buffer)).unwrap(),
+        Some(creds.clone())
+    );
+
+    let store = app.into_store();
+    let mut reloaded = block_on(PersistentTraining::load(store, &mut buffer)).unwrap();
+    assert_eq!(
+        block_on(reloaded.load_wifi_credentials(&mut buffer)).unwrap(),
+        Some(creds)
+    );
+}

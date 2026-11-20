@@ -570,7 +570,7 @@ After a long battle of comparing a working Arduino example and the Rust driver, 
 - [ ] **WiFi & Time Integration**
   - [x] Station-mode connection via `esp-radio` and `embassy-net` (`src/wireless.rs`)
   - [x] Automatic SNTP / NTP network time synchronization (`src/sntp.rs`)
-  - [ ] Persistent Wi-Fi credentials in flash/NVS (avoid re-entering over UART)
+  - [x] Persistent Wi-Fi credentials in flash storage (`src/storage.rs`)
 - [ ] **Remote Synchronization (Supabase)**
   - [x] Local training record queue (up to 32 days in flash)
   - [x] UART manual export and acknowledgement (`LIST`, `ACK`)
