@@ -68,14 +68,19 @@ The bare-metal HAL still calls functions in the chip's existing ROM, and
 boot chain consists of Rust source.
 
 Build the experimental firmware after installing the ESP Xtensa toolchain
-(`xtensa-esp32s3-elf-gcc` on `PATH` and `LIBCLANG_PATH` pointing to
-`esp-clang/lib`). Building with `--features wifi` (or host `--features test-utils`)
-also requires `cmake` (>= 3.19) and `ninja` to compile MbedTLS:
+(see [Toolchain setup](#toolchain-setup); `xtensa-esp32s3-elf-gcc` on `PATH` and
+`LIBCLANG_PATH` pointing to `esp-clang/lib`, as set up by `export-esp.sh` /
+`export-esp.ps1`) and Rust 1.95 or newer. Building with `--features wifi` (or host
+`--features test-utils`) also requires `cmake` (>= 3.19) and `ninja` to compile
+MbedTLS. The binary has `required-features = ["firmware"]`, so a plain
+`cargo build` builds only the library:
 
 ```sh
 cargo +esp build --release --features firmware
 # Include the optional station-mode Wi-Fi + HTTPS stack:
 cargo +esp build --release --features wifi
+# Flash and open the serial monitor (runner: `espflash flash --monitor`):
+cargo +esp run --release --features wifi
 ```
 
 Linked release footprints on `xtensa-esp32s3-none-elf`:
@@ -83,6 +88,52 @@ Linked release footprints on `xtensa-esp32s3-none-elf`:
 - `firmware` (offline): ~170 KiB loadable flash, 64 KiB heap (`esp_alloc`).
 - `wifi` (Wi-Fi + Embassy + MbedTLS 1.2/1.3 + root CAs): ~825 KiB loadable
   flash inside the 4 MiB `factory` partition, 160 KiB heap.
+
+### Partition table and first flash
+
+**Install the partition table before (or together with) the first firmware
+flash.** The firmware keeps its state in a dedicated `training` partition and
+refuses to start without it, panicking with
+`Invalid or missing training partition: MissingTraining`. Unless told otherwise
+`espflash` writes its own default table (`nvs`, `phy_init` and `factory`
+only) at `0x8000` on every flash unless `--partition-table` is given. The
+runner in `.cargo/config.toml` passes `--partition-table partitions.csv`, so
+`cargo +esp run` installs the table for you; the panic appears when flashing
+with a plain `espflash flash` instead.
+
+1. **Back up the existing flash.** Installing a different partition table can
+   make existing data inaccessible, so do not assume a device already has the
+   proposed layout:
+
+   ```sh
+   espflash read-flash 0 0x800000 flash-backup.bin
+   ```
+
+2. **Check `partitions.csv`.** Edit it if needed and print the resulting table:
+
+   ```sh
+   espflash partition-table partitions.csv
+   ```
+
+   The output should list `nvs` (`0x9000`, 32 KiB), `phy_init` (`0x11000`,
+   32 KiB), `factory` (`0x20000`, 4 MiB) and `training` (`0x420000`, 128 KiB, a
+   `data` partition with the custom subtype the firmware validates).
+
+3. **Flash the table together with the firmware.** `espflash` accepts the CSV
+   directly and places the application at the `factory` offset. The runner
+   (`espflash flash --monitor --partition-table partitions.csv`) does this on
+   every run, so it overwrites the partition table each time; run it from the
+   repository root so that `partitions.csv` is found:
+
+   ```sh
+   cargo +esp run --release --features wifi
+   ```
+
+   Without the runner, pass the same option to `espflash flash` yourself:
+
+   ```sh
+   espflash flash --monitor --partition-table partitions.csv target/xtensa-esp32s3-none-elf/release/mainichikatarenshu
+   ```
 
 ### Experimental Wi-Fi setup
 
@@ -106,7 +157,8 @@ Restart to change credentials or retry a radio initialization failure.
 Once connected, the firmware:
 
 - sets the clock from `pool.ntp.org` (falling back to `time.cloudflare.com`)
-  unless a valid clock is already set via `TIME` or preserved across deep sleep,
+  unless a valid clock is already set via `TIME` or preserved across deep sleep
+  (the build-time default does not count),
   retrying failed queries every minute;
 - requests the 15-minute spot price for the current UTC timestamp (`GET /v2/price.json?date=YYYY-MM-DDTHH:MM:SS.000Z`)
   from [porssisahko.net](https://porssisahko.net/api) over HTTPS (port 443) once
@@ -157,20 +209,23 @@ insert duplicate dates.
 
 ### Experimental offline operation
 
-Before flashing, inspect and back up the device's existing flash. The proposed
-`partitions.csv` reserves 128 KiB at `0x420000` for training; installing a
-different partition table can make existing data inaccessible. The firmware
-refuses to use storage unless the installed table has a valid, non-overlapping
-`training` partition with the expected type and alignment. The default flash
-runner does not install this table automatically. Plan any migration separately;
-do not assume an existing device has the proposed layout.
+Install the partition table first, as described in
+[Partition table and first flash](#partition-table-and-first-flash). The
+proposed `partitions.csv` reserves 128 KiB at `0x420000` for training (after a
+4 MiB `factory` app partition). The firmware refuses to use storage unless the
+installed table has a valid, non-overlapping `training` partition with the
+expected type and alignment.
 
 On UART0 through the board's serial interface (115200 baud), send newline
 terminated commands:
 
 - `TIME <UTC unix seconds>` sets the clock, for example `TIME 1767225600`.
-  The clock must be set after power loss or a normal reset unless the `wifi`
-  build has synchronized it over SNTP. If the time is moved backwards, the training workflow
+  After power loss or a normal reset the clock restarts from the firmware
+  build time (an estimate, printed at startup), so the device runs without any
+  setup; send `TIME` or let the `wifi` build synchronize over SNTP to correct
+  it. Until then Supabase uploads are held back, TLS certificate dates are
+  still not trusted (HTTPS fails closed), and records created on the estimated
+  clock may carry the wrong date. If the time is moved backwards, the training workflow
   pauses until the clock reaches the last observed time or is corrected. After
   restart, the comparison uses the time saved at the last state change.
 - `LIST` prints pending completed-day records in order.
@@ -191,9 +246,10 @@ loss cannot yet be ruled out. A flash write error stops the firmware because
 the outcome may be ambiguous. Do not rely on this experimental queue as the
 only copy of important records.
 
-The historical ESP-IDF instructions and roadmap below describe earlier work,
-not the current firmware build or verified functionality. Do not flash an
-existing device without first checking its flash layout and backing up its data.
+Do not flash an existing device without first checking its flash layout and
+backing up its data. The earlier ESP-IDF-based work (bootloader, debug symbols,
+driver search) is documented in [DEVELOPMENT_JOURNEY.md](DEVELOPMENT_JOURNEY.md)
+and no longer applies to the current build.
 
 ### Source layout
 
@@ -222,24 +278,39 @@ commands), `src/electricity.rs` is kept as an internal library module rather
 than a separate crate until a second consumer exists, because its formatting
 and 15-minute slot tracking are tailored to this firmware's display workflow.
 
-### 🚧 Planned Features
+### Daily schedule
 
-Each day at 07:00 EET the e-ink screen will wake up and update the kata name from a random list.
+Each day at 07:00 Helsinki time the e-ink screen updates with a kata name chosen
+at random from the configured list. At 23:00 Helsinki time the day is recorded,
+as incomplete if the CONF button has not been pressed before that. Deep sleep
+between these times is not implemented yet (see the roadmap).
 
-The display will shutdown at 23:00 EET, which will record the kata either incomplete if the button has not been pressed before that.
+The former Google Drive plan has been replaced by the Supabase sync.
 
-The former Google Drive plan has been replaced by the intended Supabase sync.
+### Toolchain setup
+
+The `esp` toolchain pinned in `rust-toolchain.toml` is installed with
+[espup](https://github.com/esp-rs/espup); flashing uses
+[espflash](https://github.com/esp-rs/espflash) (v4.x). Host tests and host
+clippy use the `stable` toolchain. Large files under `info/` and `logo.png` are
+stored with Git LFS.
 
 ```sh
-cargo install espup@0.11.0 # Get ESP tooling handler, version that still works in Windows: could not be opened: LoadLibraryExW failed
+cargo install espup@0.11.0 # Version that still works in Windows: could not be opened: LoadLibraryExW failed
 espup install # Install ESP tools
+cargo install espflash
 ```
 
-In case there was an earlier installation of esp toolchain, that folder shoulbe be removed so it is not reused.
-C:\\Users\\Jukka\\.rustup\\toolchains\\esp\
+Might need to set the tools available in Windows:
 
-https://community.chocolatey.org/packages/llvm
-choco install llvm
+```ps1
+& ~\export-esp.ps1
+```
+
+In case there was an earlier installation of the esp toolchain, remove its
+folder (on Windows `%USERPROFILE%\.rustup\toolchains\esp`) so it is not reused.
+On Windows, LLVM is also needed (`choco install llvm`,
+[package](https://community.chocolatey.org/packages/llvm)).
 
 ## Parts
 
@@ -277,352 +348,6 @@ Crystal frequency: 40 MHz
 Flash size:        8MB
 Features:          WiFi, BLE
 ```
-
-## Partitions
-
-Edit `partitions.csv` and check that it makes sense:
-
-```sh
-espflash partition-table partitions.csv
-```
-
-Output would be something like:
-
-```
-╭──────────┬──────┬─────────┬─────────┬────────────────────┬───────────╮
-│ Name     ┆ Type ┆ SubType ┆ Offset  ┆ Size               ┆ Encrypted │
-╞══════════╪══════╪═════════╪═════════╪════════════════════╪═══════════╡
-│ nvs      ┆ data ┆ nvs     ┆ 0x9000  ┆ 0x8000 (32KiB)     ┆ false     │
-├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
-│ phy_init ┆ data ┆ phy     ┆ 0x11000 ┆ 0x8000 (32KiB)     ┆ false     │
-├╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌┤
-│ factory  ┆ app  ┆ factory ┆ 0x20000 ┆ 0x200000 (2048KiB) ┆ false     │
-╰──────────┴──────┴─────────┴─────────┴────────────────────┴───────────╯
-```
-
-Convert the CSV file to a binary:
-
-```sh
-espflash partition-table --to-binary --output partition-table.bin partitions.csv
-```
-
-## Boot loader
-
-https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/bootloader.html
-
-Initial bootloader was:
-
-```
-ESP-IDF v5.1-beta1-378-gea5e0ff298-dirt 2nd stage bootloader
-```
-
-Started by installing for Windows
-https://dl.espressif.com/dl/esp-idf/
-
-Choosing the latest version (5.4. at the time, released just two days ago) and installing it in `C:\Espressif\frameworks\esp-idf-v5.4`.
-
-```sh
-idf.py create-project kukkuu
-cd kukkuu
-```
-
-Then using "menuconfig" to create some defaults:
-
-```sh
-idf.py menuconfig
-```
-
-Editing `sdkconfig` to `CONFIG_IDF_TARGET="esp32s3"` and `CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y`.
-
-Then needed to clean first
-
-```sh
-idf.py fullclean
-```
-
-Finally creating the boot loader:
-
-```sh
-idf.py bootloader
-```
-
-How does the bootloader image look like?
-
-```sh
-esptool.py image_info .\build\bootloader\bootloader.bin
-```
-
-```
-esptool.py v4.8.1
-File size: 22352 (bytes)
-Detected image type: ESP32-S3
-Image version: 1
-Entry point: 403c899c
-4 segments
-
-Segment 1: len 0x0164c load 0x3fce2810 file_offs 0x00000018 [BYTE_ACCESSIBLE,MEM_INTERNAL,DRAM]
-Segment 2: len 0x00004 load 0x403c8700 file_offs 0x0000166c [MEM_INTERNAL,IRAM]
-Segment 3: len 0x00d7c load 0x403c8704 file_offs 0x00001678 [MEM_INTERNAL,IRAM]
-Segment 4: len 0x03320 load 0x403cb700 file_offs 0x000023fc [MEM_INTERNAL,IRAM]
-Checksum: 96 (valid)
-Validation Hash: 2527a34d14de8e76959bd7d8c7429d897cc37831c2c6774515a4074df043c74f (valid)
-```
-
-Flashing is easy via same tool:
-
-```sh
-idf.py bootloader-flash
-```
-
-Output, repetitive parts omitted:
-
-```
-Executing action: bootloader-flash
-Serial port COM4
-Detecting chip type... ESP32-S3
-Bootloader binary size 0x5750 bytes. 0xa8b0 bytes (66%) free.
-esptool.py v4.8.1
-Chip is ESP32-S3 (QFN56) (revision v0.2)
-Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)
-Crystal is 40MHz
-Changing baud rate to 460800
-Configuring flash size...
-Flash will be erased from 0x00000000 to 0x00005fff...
-SHA digest in image updated
-Compressed 22352 bytes to 14245...
-Writing at 0x00000000... (100 %)
-Wrote 22352 bytes (14245 compressed) at 0x00000000 in 0.6 seconds (effective 298.6 kbit/s)...
-Hash of data verified.
-```
-
-For a full day I was flashing and flashing, changing configuration in ESP-IDF project, but once flashing with
-`espflash`, the ouput told that the older bootloader was still being used.
-
-Finally it turned out that espflash has its own bootloader provided when not using esp-idf-sys package in the project.
-
-```
-runner = "espflash flash --monitor --bootloader kukkuu/build/bootloader/bootloader.bin --partition-table partition-table.bin"
-```
-
-Now the output from `cargo +esp run --release` is
-
-```
-ESP-ROM:esp32s3-20210327
-Build:Mar 27 2021
-rst:0x1 (POWERON),boot:0xb (SPI_FAST_FLASH_BOOT)
-SPIWP:0xee
-mode:DIO, clock div:2
-load:0x3fce2820,len:0x16ec
-load:0x403c8700,len:0x4
-load:0x403c8704,len:0xeac
-load:0x403cb700,len:0x3170
-entry 0x403c894c
-I (31) boot: ESP-IDF v5.4-dirty 2nd stage bootloader
-I (31) boot: Multicore bootloader
-I (31) boot: chip revision: v0.2
-I (31) boot: efuse block revision: v1.3
-I (34) qio_mode: Enabling default flash chip QIO
-I (38) boot.esp32s3: Boot SPI Speed : 40MHz
-I (42) boot.esp32s3: SPI Mode       : QIO
-I (46) boot.esp32s3: SPI Flash Size : 4MB
-I (50) boot: Enabling RNG early entropy source...
-I (54) boot: Partition Table:
-I (57) boot: ## Label            Usage          Type ST Offset   Length
-I (63) boot:  0 nvs              WiFi data        01 02 00009000 00010000
-I (70) boot:  1 phy_init         RF data          01 01 00019000 00010000
-I (76) boot:  2 factory          factory app      00 00 00030000 00300000
-I (83) boot: End of partition table
-I (86) boot: Loaded app from partition at offset 0x30000
-I (91) boot: Disabling RNG early entropy source...
-```
-
-## Debug symbols missing in dev profile
-
-```
-xtensa-esp32-elf-readelf -S target/xtensa-esp32s3-none-elf/debug/mainichikatarenshu
-There are 4 section headers, starting at offset 0x60:
-
-Section Headers:
-  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
-  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
-  [ 1] .symtab           SYMTAB          00000000 000034 000010 10      2   1  4
-  [ 2] .strtab           STRTAB          00000000 000044 000001 00      0   0  1
-  [ 3] .shstrtab         STRTAB          00000000 000045 00001b 00      0   0  1
-Key to Flags:
-  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
-  L (link order), O (extra OS processing required), G (group), T (TLS),
-  C (compressed), x (unknown), o (OS specific), E (exclude),
-  D (mbind), p (processor specific)
-```
-
-At this point
-idf.py erase-flash
-Chip erase completed successfully in 5.0s
-
-to see that there was all the time in use some older partition table, as now there is nothing...
-
-Use menuconfig to set the partion table file as `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"`.
-
-Ok, the bootloader and partition table flashing needs to be done via `idf.py`, and the resulted bootloader used when application is flashed via `espflash`.
-
-Uh, there was nothing coming in the final binary, in both release and dev profiles it was the same, no debug symbols.
-
-Went forward by using the [esp-idf-template](https://github.com/esp-rs/esp-idf-template), but that had immediately problems linking:
-
-```
-error: linking with `ldproxy` failed: exit code: 101
-  = note: [ldproxy] Running ldproxy
-          thread 'main' panicked at C:\Users\Jukka\.cargo\registry\src\index.crates.io-6f17d22bba15001f\ldproxy-0.3.4\src/main.rs:44:13:
-          Cannot locate argument '--ldproxy-linker <linker>'
-          stack backtrace:
-          note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
-```
-
-Finally this was solved by having a `build.rs` file with the contents:
-
-```rust
-fn main() {
-    embuild::espidf::sysenv::output();
-}
-```
-
-Now that the build is passing, checking to see what kind of symbols there are:
-
-```
-xtensa-esp32-elf-readelf -S .\target\xtensa-esp32s3-espidf\release\mainichikatarenshu
-There are 37 section headers, starting at offset 0x566f34:
-
-Section Headers:
-  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
-  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
-  [ 1] .rtc.text         PROGBITS        600fe000 06c000 000100 00  AX  0   0  4
-  [ 2] .rtc.force_fast   PROGBITS        600fe100 06c100 000020 00  WA  0   0  4
-  [ 3] .rtc_noinit       PROGBITS        50000000 06c120 000000 00   W  0   0  1
-  [ 4] .rtc.force_slow   PROGBITS        50000000 06c120 000000 00   W  0   0  1
-  [ 5] .rtc_reserved     NOBITS          600fffe8 06cfe8 000018 00  WA  0   0  8
-  [ 6] .iram0.vectors    PROGBITS        40374000 01f000 000403 00  AX  0   0  4
-  [ 7] .iram0.text       PROGBITS        40374404 01f404 00dd03 00  AX  0   0  4
-  [ 8] .dram0.dummy      NOBITS          3fc88000 012000 00a200 00  WA  0   0  1
-  [ 9] .dram0.data       PROGBITS        3fc92200 01c200 002954 00  WA  0   0 16
-  [10] .noinit           NOBITS          3fc94b54 000000 000000 00  WA  0   0  1
-  [11] .dram0.bss        NOBITS          3fc94b58 01eb54 000990 00  WA  0   0  8
-  [12] .flash.text       PROGBITS        42000020 02e020 03de38 00  AX  0   0  4
-  [13] .flash_rodat[...] NOBITS          3c000020 001020 040000 00  WA  0   0  1
-  [14] .flash.appdesc    PROGBITS        3c040020 001020 000100 00   A  0   0 16
-  [15] .flash.rodata     PROGBITS        3c040120 001120 0103a8 00  WA  0   0 16
-  [16] .ext_ram.dummy    NOBITS          3c000020 001020 05ffe0 00  WA  0   0  1
-  [17] .iram0.text_end   NOBITS          40382107 02d107 0000f9 00  WA  0   0  1
-  [18] .iram0.data       PROGBITS        40382200 06c120 000000 00   W  0   0  1
-  [19] .iram0.bss        PROGBITS        40382200 06c120 000000 00   W  0   0  1
-  [20] .dram0.heap_start PROGBITS        3fc954e8 06c120 000000 00   W  0   0  1
-  [21] .debug_aranges    PROGBITS        00000000 06c120 007688 00      0   0  8
-  [22] .debug_info       PROGBITS        00000000 0737a8 1e52b6 00      0   0  1
-  [23] .debug_abbrev     PROGBITS        00000000 258a5e 02c1ef 00      0   0  1
-  [24] .debug_line       PROGBITS        00000000 284c4d 11285f 00      0   0  1
-  [25] .debug_frame      PROGBITS        00000000 3974ac 00cba0 00      0   0  4
-  [26] .debug_str        PROGBITS        00000000 3a404c 10920e 01  MS  0   0  1
-  [27] .debug_loc        PROGBITS        00000000 4ad25a 0518f6 00      0   0  1
-  [28] .debug_ranges     PROGBITS        00000000 4feb50 02bc40 00      0   0  8
-  [29] .debug_line_str   PROGBITS        00000000 52a790 001a9d 01  MS  0   0  1
-  [30] .debug_loclists   PROGBITS        00000000 52c22d 00a6d6 00      0   0  1
-  [31] .debug_rnglists   PROGBITS        00000000 536903 000240 00      0   0  1
-  [32] .comment          PROGBITS        00000000 536b43 000093 01  MS  0   0  1
-  [33] .xtensa.info      NOTE            00000000 536bd6 000038 00      0   0  1
-  [34] .symtab           SYMTAB          00000000 536c10 013a80 10     35 1988  4
-  [35] .strtab           STRTAB          00000000 54a690 01c6cc 00      0   0  1
-  [36] .shstrtab         STRTAB          00000000 566d5c 0001d7 00      0   0  1
-Key to Flags:
-  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
-  L (link order), O (extra OS processing required), G (group), T (TLS),
-  C (compressed), x (unknown), o (OS specific), E (exclude),
-  D (mbind), p (processor specific)
-```
-
-```
-xtensa-esp32-elf-readelf -S .\target\xtensa-esp32s3-espidf\debug\mainichikatarenshu
-There are 37 section headers, starting at offset 0x10c2050:
-
-Section Headers:
-  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
-  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
-  [ 1] .rtc.text         PROGBITS        600fe000 120000 000100 00  AX  0   0  4
-  [ 2] .rtc.force_fast   PROGBITS        600fe100 120100 000020 00  WA  0   0  4
-  [ 3] .rtc_noinit       PROGBITS        50000000 120120 000000 00   W  0   0  1
-  [ 4] .rtc.force_slow   PROGBITS        50000000 120120 000000 00   W  0   0  1
-  [ 5] .rtc_reserved     NOBITS          600fffe8 120fe8 000018 00  WA  0   0  8
-  [ 6] .iram0.vectors    PROGBITS        40374000 034000 000403 00  AX  0   0  4
-  [ 7] .iram0.text       PROGBITS        40374404 034404 00f527 00  AX  0   0  4
-  [ 8] .dram0.dummy      NOBITS          3fc88000 025000 00ba00 00  WA  0   0  1
-  [ 9] .dram0.data       PROGBITS        3fc93a00 030a00 002b9c 00  WA  0   0 16
-  [10] .noinit           NOBITS          3fc9659c 000000 000000 00  WA  0   0  1
-  [11] .dram0.bss        NOBITS          3fc965a0 03359c 0009e0 00  WA  0   0  8
-  [12] .flash.text       PROGBITS        42000020 044020 0dbf46 00  AX  0   0  4
-  [13] .flash_rodat[...] NOBITS          3c000020 001020 0e0000 00  WA  0   0  1
-  [14] .flash.appdesc    PROGBITS        3c0e0020 001020 000100 00   A  0   0 16
-  [15] .flash.rodata     PROGBITS        3c0e0120 001120 023480 00  WA  0   0 16
-  [16] .ext_ram.dummy    NOBITS          3c000020 001020 10ffe0 00  WA  0   0  1
-  [17] .iram0.text_end   NOBITS          4038392b 04392b 0000d5 00  WA  0   0  1
-  [18] .iram0.data       PROGBITS        40383a00 120120 000000 00   W  0   0  1
-  [19] .iram0.bss        PROGBITS        40383a00 120120 000000 00   W  0   0  1
-  [20] .dram0.heap_start PROGBITS        3fc96f80 120120 000000 00   W  0   0  1
-  [21] .debug_aranges    PROGBITS        00000000 120120 031e40 00      0   0  8
-  [22] .debug_info       PROGBITS        00000000 151f60 5f371d 00      0   0  1
-  [23] .debug_abbrev     PROGBITS        00000000 74567d 03cc90 00      0   0  1
-  [24] .debug_line       PROGBITS        00000000 78230d 22eaa0 00      0   0  1
-  [25] .debug_frame      PROGBITS        00000000 9b0db0 00f3e8 00      0   0  4
-  [26] .debug_str        PROGBITS        00000000 9c0198 52e7b4 01  MS  0   0  1
-  [27] .debug_loc        PROGBITS        00000000 eee94c 071c80 00      0   0  1
-  [28] .debug_ranges     PROGBITS        00000000 f605d0 0600d8 00      0   0  8
-  [29] .debug_line_str   PROGBITS        00000000 fc06a8 001a9d 01  MS  0   0  1
-  [30] .debug_loclists   PROGBITS        00000000 fc2145 00a6d6 00      0   0  1
-  [31] .debug_rnglists   PROGBITS        00000000 fcc81b 000240 00      0   0  1
-  [32] .comment          PROGBITS        00000000 fcca5b 000093 01  MS  0   0  1
-  [33] .xtensa.info      NOTE            00000000 fccaee 000038 00      0   0  1
-  [34] .symtab           SYMTAB          00000000 fccb28 032100 10     35 2614  4
-  [35] .strtab           STRTAB          00000000 ffec28 0c3251 00      0   0  1
-  [36] .shstrtab         STRTAB          00000000 10c1e79 0001d7 00      0   0  1
-Key to Flags:
-  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
-  L (link order), O (extra OS processing required), G (group), T (TLS),
-  C (compressed), x (unknown), o (OS specific), E (exclude),
-  D (mbind), p (processor specific)
-```
-
-Same for both.
-
-It took some time to come back to this project as the Waveshare driver and embedded graphics seemed to be
-hard to get working together.
-Finally when looking at the diff
-https://github.com/caemor/epd-waveshare/compare/v0.5.0...v0.6.0
-and
-https://github.com/embedded-graphics/embedded-graphics
-matcing use cases, got the build to compile with
-minilar text styling in a display created from `VarDisplay::new()` instead of `Display2in9::default()`.
-
-That then revealed that even when the display has two colors, they should not be defined as `embedded_graphics::pixelcolor::BinaryColor:::Off`,
-but as `epd_waveshare::color::Color::White`.
-
-The text started to appear in the screen but they kept drawing om top of existing ones,
-not clearning the screen at any point.
-
-The working module was `epd_waveshare::epd2in9_v2`, but the internal commands might differ, which is why
-other similar board configurations were tried out...
-
-The display is using a driver SSD1680, so perhaps should be looking at some other EPD provier than Waveshare crate.
-
-GitHub search revealed
-https://github.com/embedded-drivers/epd
-and
-https://github.com/mbv/ssd1680
-to be promising ones, the latter being used at https://github.com/mbv/esp32-ssd1680/blob/main/Cargo.toml
-
-None of the drivers seemed fit, since the commands they used were not matching the ones in Arduino examples by Elecrow
-
-Writing my own driver based on mbv/ssd1680
-
-Replaced package `espflash v3.3.0` with `espflash v4.2.0` (executable `espflash.exe`)
-
-After a long battle of comparing a working Arduino example and the Rust driver, finally got the screen to show something.
 
 ## Development Roadmap
 
@@ -713,8 +438,11 @@ cargo +stable test --workspace --doc --features test-utils --target <host-triple
 cargo +stable clippy --workspace --lib --tests --features test-utils --target <host-triple> -- -D warnings
 cargo +esp clippy --release --features wifi -- -D warnings
 
-# Coverage - settings in tarpaulin.toml, fails below 90%
+# Coverage - needs `cargo install cargo-tarpaulin`; settings in tarpaulin.toml, fails below 90%
 cargo +stable tarpaulin
+
+# Formatting
+cargo fmt --all -- --check
 ```
 
 The host triple is, for example, `x86_64-unknown-linux-gnu` or
@@ -726,10 +454,12 @@ and integration tests (`--lib --tests`), formatting, and host clippy;
 documentation tests (`--doc`), firmware clippy, and `cargo +stable tarpaulin`
 are local checks.
 
+On Windows the host test build fails in `mbedtls-rs-sys` with the MSVC toolchain (MbedTLS headers use GCC attributes); run the host tests on Linux, WSL or the Dev Container, as CI does.
+
 ### Repeatable hardware verification steps (when a CrowPanel and test services are available)
 
-1. **Inspect and back up flash** (`espflash read-flash`) and confirm the installed partition table matches `partitions.csv` before flashing.
-2. **Build and flash a test image** pointing `SUPABASE_HOST`, `SUPABASE_ANON_KEY` and `SUPABASE_TABLE` at a dedicated non-production Supabase table (with RLS insert-only policy and `UNIQUE (date)`), then open the UART0 monitor at 115200 baud.
+1. **Inspect and back up flash** (`espflash read-flash`), then install `partitions.csv` as described in [Partition table and first flash](#partition-table-and-first-flash) before anything else is flashed.
+2. **Build and flash a test image** (with `--partition-table partitions.csv`) pointing `SUPABASE_HOST`, `SUPABASE_ANON_KEY` and `SUPABASE_TABLE` at a dedicated non-production Supabase table (with RLS insert-only policy and `UNIQUE (date)`), then open the UART0 monitor at 115200 baud.
 3. **Verify Wi-Fi + SNTP + HTTPS price fetch:** send `SSID <name>`, `PASSWORD <passphrase>`, `CONNECT`; confirm serial output logs `Wi-Fi IPv4: ...`, `SNTP sync success!`, and `Current electricity price: ... c/kWh`, and that the panel renders the kata and price.
 4. **Verify manual `TIME` fallback:** on a network blocking UDP port 123, reboot, send `TIME <current UTC unix seconds>`, and confirm HTTPS price retrieval still succeeds using the manual clock.
 5. **Verify Supabase upload and queue drain:** advance across a day boundary (or confirm a day and advance past 23:00 Helsinki time via `TIME`), run `LIST` to see the queued record, then confirm `Supabase sync succeeded for record ...` appears and `LIST` drops to `Pending records: 0`.
@@ -737,14 +467,18 @@ are local checks.
 
 ## Build System
 
-The build script (`build.rs`) generates three files in `OUT_DIR`:
+The build script (`build.rs`) generates four files in `OUT_DIR`:
 
 - `kata.rs` - the kata names from `kata.yaml` (or `KATA_CONFIG`), validated by
   `build_support/kata_config.rs`;
 - `supabase.rs` - the optional Supabase settings from `SUPABASE_HOST`,
   `SUPABASE_ANON_KEY` and `SUPABASE_TABLE`;
 - `ca_bundle.rs` - the validated PEM root CA bundle from `certs/ca-roots.pem`
-  (or `TLS_CA_BUNDLE`), validated by `build_support/ca_config.rs`.
+  (or `TLS_CA_BUNDLE`), validated by `build_support/ca_config.rs`;
+- `build_time.rs` - the build time in Unix seconds (`clock::BUILD_UNIX_SECS`),
+  the clock's starting point after a reset. It is refreshed whenever `src/`,
+  `crates/`, `Cargo.toml` or `Cargo.lock` change, and `SOURCE_DATE_EPOCH`
+  overrides it for reproducible builds.
 
 ## License
 
@@ -781,7 +515,7 @@ The Dev Container includes the Wokwi Vs Code installed, hence you can simulate y
 
 > **Note**
 >
-> We assume that the project is built in `debug` mode, if you want to simulate projects in release, please update the `elf` and `firmware` proprieties in `wokwi.toml`.
+> We assume that the project is built in `debug` mode (`cargo +esp build --features firmware`, or `--features wifi`), if you want to simulate projects in release, please update the `elf` and `firmware` proprieties in `wokwi.toml`.
 
 For more information and details on how to use the Wokwi extension, see [Getting Started] and [Debugging your code] Chapter of the Wokwi documentation.
 

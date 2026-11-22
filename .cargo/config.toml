@@ -5,8 +5,11 @@ target = "xtensa-esp32s3-none-elf"
 [target.xtensa-esp32s3-none-elf]
 
 # https://github.com/esp-rs/espflash
-runner = "espflash flash --monitor"
-rustflags = ["-C", "link-arg=-Tlinkall.x"]
+# The firmware needs the `training` partition, so always install partitions.csv (see README).
+runner = "espflash flash --monitor --partition-table partitions.csv"
+# GNU ld warns that the esp-hal linker script produces a LOAD segment with RWX permissions;
+# the layout comes from esp-hal, so the warning is not actionable here.
+rustflags = ["-C", "link-arg=-Tlinkall.x", "-C", "link-arg=-Wl,--no-warn-rwx-segments"]
 
 [unstable]
 # Required for std support. Rust does not provide std libraries for ESP32 targets since they are tier-2/-3.

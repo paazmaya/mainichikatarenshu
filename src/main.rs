@@ -46,10 +46,15 @@ use mainichikatarenshu::{
 #[cfg(feature = "wifi")]
 mod wireless;
 
+// The ESP-IDF 2nd stage bootloader (provided by `espflash`) requires this descriptor.
+esp_bootloader_esp_idf::esp_app_desc!();
+
 /// Offset of the ESP partition table in flash.
 const PARTITION_TABLE_OFFSET: u32 = 0x8000;
 /// Button debounce interval in milliseconds.
 const DEBOUNCE_MS: u64 = 50;
+/// Time for the panel supply to stabilize after enabling it, in milliseconds.
+const EPD_POWER_SETTLE_MS: u32 = 100;
 /// Main loop polling interval in milliseconds.
 const POLL_INTERVAL_MS: u32 = 25;
 /// Longest single rest pause, so serial input is still noticed regularly.
@@ -97,6 +102,11 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
         wireless::start(peripherals.WIFI, peripherals.RNG, peripherals.ADC1, spawner)
     };
 
+    // The panel is powered through GPIO7 (`Pins::EPD_POWER`, `LCD_3.3_CTL`). Without it the
+    // controller never answers; keep the pin driven for as long as the firmware runs.
+    let _epd_power = Output::new(peripherals.GPIO7, Level::High, OutputConfig::default());
+    Delay::new().delay_millis(EPD_POWER_SETTLE_MS);
+
     let mut panel = init_panel(
         peripherals.SPI2,
         peripherals.GPIO12,
@@ -114,14 +124,27 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
     let mut scratch = [0u8; 4096];
     let training = load_training(peripherals.FLASH, &mut scratch);
     let rtc = Rtc::new(peripherals.RTC_TIMER);
-    // The RTC keeps time only across deep sleep; after other resets it must be set again.
+    // The RTC keeps time only across deep sleep; after other resets it starts from the
+    // firmware build time, an estimate that SNTP or `TIME` replaces.
     let initial_rtc_us = rtc.current_time_us();
-    let time_valid = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep)
+    let rtc_time_valid = reset_reason(Cpu::ProCpu) == Some(SocResetReason::CoreDeepSleep)
         && clock::is_rtc_time_valid(initial_rtc_us);
     #[cfg(feature = "wifi")]
-    if time_valid {
+    if rtc_time_valid {
         wireless::set_wall_clock(clock::unix_secs_from_rtc_micros(initial_rtc_us));
     }
+    let mut clock_estimated = false;
+    if !rtc_time_valid {
+        if let Some(build_micros) = clock::rtc_micros_from_unix_secs(clock::BUILD_UNIX_SECS) {
+            rtc.set_current_time_us(build_micros);
+            clock_estimated = true;
+            esp_println::println!(
+                "Clock set to firmware build time {}; send TIME or connect Wi-Fi to correct it",
+                clock::BUILD_UNIX_SECS
+            );
+        }
+    }
+    let time_valid = rtc_time_valid || clock_estimated;
     let buttons = Buttons {
         bank: ButtonBank::new(DEBOUNCE_MS, rtc.time_since_power_up().as_millis()),
         confirm: pull_up_input(peripherals.GPIO5),
@@ -142,6 +165,7 @@ async fn application(#[cfg(feature = "wifi")] spawner: embassy_executor::Spawner
         scratch,
         rng: Rng::new(),
         time_valid,
+        clock_estimated,
         last_second: None,
         training_error: None,
         electricity_price: None,
@@ -280,8 +304,10 @@ struct App {
     /// Scratch buffer for flash operations.
     scratch: [u8; 4096],
     rng: Rng,
-    /// Whether the RTC holds a trusted time.
+    /// Whether the RTC holds a usable time.
     time_valid: bool,
+    /// Whether that time is only the firmware build time, not set by `TIME` or SNTP.
+    clock_estimated: bool,
     /// The RTC second at which training was last advanced.
     last_second: Option<u64>,
     /// The error currently pausing the training workflow.
@@ -342,6 +368,7 @@ impl App {
         #[cfg(feature = "wifi")]
         wireless::set_wall_clock(clock::unix_secs_from_rtc_micros(rtc_micros));
         self.time_valid = true;
+        self.clock_estimated = false;
         self.last_second = None;
         self.redraw = true;
     }
@@ -536,7 +563,7 @@ impl App {
             .record_sync
             .dispatch_next(
                 mainichikatarenshu::supabase::CONFIGURED.is_some(),
-                self.time_valid,
+                self.time_valid && !self.clock_estimated,
                 self.training.state().pending(),
                 |record| wireless::RECORD_SYNC_REQUEST.try_send(record),
             )

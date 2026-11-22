@@ -108,6 +108,7 @@ esp-println = { version = "0.18.0", default-features = false, features = [
 ] }
 embedded-hal-bus = "0.3.0"
 esp-storage = { version = "0.10", features = ["esp32s3", "embedded-storage"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
 embedded-storage = "0.3"
 embassy-futures = "0.1"
 embassy-embedded-hal = "0.6"

@@ -12,7 +12,7 @@ The goal was simple yet ambitious: create a daily martial arts kata reminder usi
 
 **SD Prompt:** `A minimalist e-paper display showing Japanese kanji characters for martial arts kata, mounted on a wooden desk with morning sunlight, black and white aesthetic, clean modern design, photorealistic, 4k`
 
-## Chapter 1: The Toolchain Odyssey (October 2025)
+## Chapter 1: The Toolchain Odyssey (January–February 2025)
 
 ### Setting Up the ESP32-S3 Environment
 
@@ -45,6 +45,21 @@ The twist? `espflash` has its own bootloader that it provides when not using the
 runner = "espflash flash --monitor --bootloader kukkuu/build/bootloader/bootloader.bin --partition-table partition-table.bin"
 ```
 
+### Silent Failures: Old Bootloader, Old Partition Table, No Symbols
+
+Three more dead ends followed (commits `d4ca374`, `ecb5429`, `4fbcf78`, `e6117ba`):
+
+- After flashing a new bootloader, the boot log still printed the old `ESP-IDF v5.1-beta1` banner. A full `erase-flash` then showed that an older partition table had been in use all along.
+- The firmware aborted at runtime, but the ELF had no debug symbols in either profile, so there was nothing to debug with. `readelf -S` showed the same four section headers for dev and release. The ESP-IDF template then failed to link (`ldproxy` panic) until a one-line `build.rs` calling `embuild::espidf::sysenv::output()` was added; only then did `.debug_*` sections appear.
+- Version bumps broke things: `esp-idf-svc` 0.51 no longer compiled, so it was held at 0.50.1 and excluded from Renovate (`ec38e25`).
+
+**Learning:**
+
+- Check which bootloader and partition table are really on the device (boot log banner, `erase-flash`) before changing either.
+- Inspect the artifact (`readelf -S`) instead of assuming a profile setting produced symbols; a missing `build.rs` hook failed silently.
+- Pin tightly-coupled ecosystem crates and exclude them from automatic update PRs until the set is known to work together (the same reason `esp-radio` is pinned with `=` in `Cargo.toml` today).
+- A tool's defaults (`espflash` bringing its own bootloader) can override what the project thinks it configured.
+
 **SD Prompt:** `A computer screen showing terminal windows with compilation logs, ESP32 development board connected via USB cable, dim workshop lighting, technical atmosphere, developer workspace, cinematic lighting, detailed electronics`
 
 ## Chapter 2: The Driver Search (October 14, 2025 - Morning)
@@ -58,6 +73,24 @@ Initially, I tried using existing Rust drivers:
 - **mbv/ssd1680**: Promising but commands didn't align with the Elecrow Arduino examples
 
 The display uses an SSD1680 controller, but the command sequences in the [working Arduino examples](https://github.com/Elecrow-RD/CrowPanel-ESP32-E-Paper) differed from all existing Rust drivers. The decision was made: **write a custom driver from scratch**.
+
+### The Detours That Led There (January–February 2025)
+
+The history shows that the decision was not instant. Roughly in order:
+
+1. **`epd-waveshare` 0.6 with `embedded-graphics`** (`19017a7`, `d6e5283`): it compiled only after dropping to 0.5.0 and diffing the two releases. Text then appeared, but colors had to be `epd_waveshare::color::Color` rather than `BinaryColor`, and each draw landed on top of the previous one because the screen was never cleared.
+2. **Other board configurations of the same crate** (`dde3156`): `epd2in9_v2` was the only module that did anything, so similar boards were tried at random. With a different driver library it became "hard to know if anything is updated to the display really".
+3. **Vendoring `mbv/ssd1680`** (`ebc5099`, `607bdbc`): the code compiled and ran, but still did not clear or write.
+4. **Restructuring for "more direct pin access"** (`f428efa`): the commit message says it plainly: _that did not help_.
+5. **Plenty of logging** (`170587e`): added to find out why the code stalled after the activate command. This pointed at the BUSY pin (Chapter 4).
+6. **Reading the specification more closely** (`61cedde`): the Arduino example's command bytes (`0xF4`, `0xB1`, `0x91`, `0xC7`, data entry mode, border waveform) were written down next to the datasheet, which prepared the line-by-line comparison in Chapter 3.
+
+**Learning:**
+
+- Identify the controller chip, not only the panel size. A crate for another panel with a similar size shares some commands and silently differs in others.
+- "It compiles and runs" proves nothing for a display. Without a visible effect, every attempt was a coin flip, so a known-good reference (the Arduino code) was needed first.
+- Moving code around is not debugging. The step that made progress was instrumenting the timing, not reorganizing the pins.
+- Writing the reference values down in one place turns a vague mismatch into a diff.
 
 ### Building the Foundation
 
@@ -114,6 +147,8 @@ pub fn fast_update(&mut self, delay: &mut impl DelayNs) -> Result<(), DisplayErr
 }
 ```
 
+**Learning:** When a datasheet and a known-working implementation disagree, find the differences by comparing line by line, and record each one together with the reason it was changed. Three small differences (`0xF4`, inversion, update mode) explained everything the datasheet alone could not.
+
 **SD Prompt:** `Close-up of e-paper display showing partial refresh in progress, ghosting effect visible, black and white pixels transitioning, macro photography, technical documentation style, high contrast`
 
 ## Chapter 4: The Blank Screen Mystery (October 14, 2025 - Noon)
@@ -161,6 +196,8 @@ I (xxxxx) mainichikatarenshu::ssd1680::interface: Still waiting for BUSY pin... 
 I (xxxxx) mainichikatarenshu::ssd1680::interface: Still waiting for BUSY pin... (count: 2M)
 I (xxxxx) mainichikatarenshu::ssd1680::interface: EPD_READBUSY: BUSY pin is now LOW after 5654183 iterations
 ```
+
+**Learning:** Every command was logged as sent and nothing reported an error, yet the screen stayed blank. Timing bugs on slow hardware produce no errors, so log the wait itself (the BUSY iteration count above) to prove that the code really waits.
 
 **SD Prompt:** `Digital oscilloscope showing BUSY pin signal transitioning from HIGH to LOW, electronic measurement equipment, laboratory setting, technical precision, blue and green waveforms, professional electronics testing`
 
@@ -221,6 +258,8 @@ This affects `embedded-graphics` integration:
 - `BinaryColor::Off` (0) → **white** on this display
 - `BinaryColor::On` (1) → **black** on this display
 
+**Learning:** The first fix (BUSY) revealed the next problem (polarity); an all-black screen is progress compared with a blank one. The inversion was applied in three separate places (clear value, buffer fill, send path), which is easy to get half-right, so state the colour mapping once where it matters (`BinaryColor::Off` = white) and keep it documented.
+
 **SD Prompt:** `Yin-yang symbol made of e-paper display pixels, inverted colors concept, black and white contrast, philosophical technology fusion, minimalist art style, high contrast monochrome`
 
 ## Chapter 6: Code Archaeology (November 8, 2025 - Morning)
@@ -247,6 +286,8 @@ With the driver working, I documented which functions were actually being used i
 - Emergency recovery functions (`emergency_clear()`, `factory_reset_clear()`)
 
 These unused functions represent the exploration process—different approaches tried, debugging tools created, and future capabilities planned. They're documented as `**UNUSED**` but kept for debugging and future power management features.
+
+**Learning:** Only 7 of 30+ driver functions were used. Keeping the rest "for debugging" felt safe, but in November 2026 they were removed together with other uncalled code (Chapter 11), so unused code is only worth keeping while someone is actually likely to call it.
 
 **SD Prompt:** `Archaeological dig site metaphor with layers of code, git history visualization, code evolution timeline, developer tools and artifacts, educational infographic style, clean vector graphics`
 
@@ -293,6 +334,8 @@ Extracted common patterns into reusable helpers:
 - **Readability:** Function names serve as inline documentation
 
 Similar refactoring in `interface.rs` added 5 helper functions for pin operations and command sequences, reducing another 20 lines of repetition.
+
+**Learning:** Six helpers removed only 141 of 1,744 lines; `driver.rs` stayed above 1,600 lines. Deduplicating inside a file is not the same as deciding what belongs in the file at all, and the larger reduction only came with the crate extraction and dead-code removal in Chapter 11.
 
 **SD Prompt:** `Code refactoring visualization, before and after comparison, tangled spaghetti code transforming into clean organized modules, abstract technical illustration, blue and green color scheme, modern software engineering concept art`
 
@@ -550,6 +593,8 @@ stats.reset_weekly();           // Weekly maintenance
 stats.break_streak();           // Handle missed days
 ```
 
+**Learning:** This refactoring built generic structure ahead of its callers. Within eight months `TrainingStats`, five of the screens, `display_utils.rs`, `kata_display.rs`, `display_tests.rs` and `tests/unit_tests.rs` had been deleted or replaced (`c48e4d3`, Chapter 11). Abstraction is worth the cost when something already calls it; tests that only restate other tests add maintenance and no safety.
+
 **SD Prompt:** `Modular software architecture visualization, showing separate modules for text rendering, display utilities, application logic, and testing, connected by clean interfaces, professional software design diagram, blue and white color scheme`
 
 ## Technical Achievements (March 2026 Snapshot)
@@ -626,9 +671,9 @@ The five markdown files created during development became invaluable:
 - `FUNCTION_USAGE.md` - Code archaeology
 - `REFACTORING_SUMMARY.md` - Cleanup process
 
-### 5. Keep Debug Code
+### 5. Keep Debug Code (With Limits)
 
-Functions marked `**UNUSED**` aren't waste—they're debugging tools and future features. Test patterns, emergency clears, and alternative update modes proved invaluable during development.
+Functions marked `**UNUSED**` aren't waste while the hardware is still being understood—test patterns, emergency clears, and alternative update modes proved invaluable during development. Once the driver was stable and extracted into its own crate, uncalled code was removed (Chapter 11); keep exploration tools only for as long as they are plausibly needed.
 
 ### 6. Invest in Abstraction
 
@@ -641,6 +686,18 @@ Breaking code into logical modules (text rendering, display utilities, applicati
 ### 8. Testability is Design
 
 Designing for testability isn't an afterthought—it's fundamental. Pure functions that accept generic traits make comprehensive testing possible and catch bugs early.
+
+### 9. Change One Thing, With a Hypothesis
+
+The January 2025 history is a run of commits that reshuffled code without learning anything ("that did not help", "still crash when running"). Progress came from logging the BUSY wait, then from a line-by-line comparison with the working Arduino code.
+
+### 10. Pin What Must Work Together
+
+`esp-idf-svc`, `epd-waveshare` and the later `esp-radio` all needed specific versions to compile together. Pin them, exclude them from automatic updates until verified, and record why.
+
+### 11. Delete in the Same Change
+
+Dead modules left behind by a migration (`src/input/`, `src/wifi.rs`, `kukkuu/`) and abstractions built before their callers (`display_utils`, `TrainingStats`) were all removed later. Removing code while the reason is still fresh is cheaper.
 
 **SD Prompt:** `Open notebook with handwritten technical notes, sketches of circuit diagrams, coffee cup, mechanical keyboard, developer's desk from above, warm lighting, productive workspace aesthetic, photorealistic`
 
@@ -714,7 +771,7 @@ The project moved target architectures from `xtensa-esp32s3-espidf` (with standa
 target = "xtensa-esp32s3-none-elf"
 
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --monitor"
+runner = "espflash flash --monitor" # later: + --partition-table partitions.csv
 rustflags = ["-C", "link-arg=-Tlinkall.x"]
 
 [unstable]
@@ -734,7 +791,15 @@ The main entry point was rewritten using `#[esp_hal::main]` (or `#[esp_rtos::mai
 
 ### Retiring the Bootloader Project
 
-With `espflash` managing partition tables and flashing directly, the helper C project `kukkuu/` and `sdkconfig.defaults` were retired and removed. Tooling configurations (`wokwi.toml`, VS Code launch profiles) were updated to target the `xtensa-esp32s3-none-elf` binary.
+With `espflash` managing partition tables and flashing directly, the helper C project `kukkuu/` and `sdkconfig.defaults` were retired and removed.
+
+The bootloader that `espflash` supplies is still an ESP-IDF 2nd stage bootloader, and it refuses an `esp-hal` image that lacks the ESP-IDF application descriptor (`ESP-IDF App Descriptor ... missing in your esp-hal application`). The fix is the `esp-bootloader-esp-idf` crate and one `esp_bootloader_esp_idf::esp_app_desc!();` line in `src/main.rs`, which adds a `.flash.appdesc` section to the ELF. Both release builds linked fine without it, so only flashing revealed the gap (Chapter 1's lesson again: the build passing says nothing about what the bootloader accepts).
+
+The first run on the CrowPanel then booted the app and panicked with `Invalid or missing training partition: MissingTraining`. `espflash flash` writes its own default partition table (`nvs`, `phy_init`, `factory`) at `0x8000` unless `--partition-table` is given, so the `training` partition that `partitions.csv` defines never existed on the device. The firmware's partition validation did its job; the README just had to put the partition table step before the first flash, and the runner in `.cargo/config.toml` now passes `--partition-table partitions.csv` so every `cargo run` installs it.
+
+The next run reached the display and panicked with `Display update failed: BusWriteError`. The ESP-IDF-era code had enabled the panel supply on GPIO7 (`LCD_3.3_CTL`, as the Arduino example does) and waited 100 ms; the rewrite only kept the pin number as a constant in `pins.rs` and never drove it. `main.rs` now sets GPIO7 high and waits 100 ms before touching the panel. Unpowered, the controller cannot answer, and `BusWriteError` is also what the driver reports for a BUSY timeout, so the error name pointed at SPI while the cause was power. A migration has to carry over side effects such as enabling a supply pin, not only the API calls. Tooling configurations (`wokwi.toml`, VS Code launch profiles) were updated to target the `xtensa-esp32s3-none-elf` binary.
+
+**Learning:** The migration commit (`de6fedf`, "Almost full refactor to drop out ESP-IDF") left the ESP-IDF-era modules (`src/input/`, `src/wifi.rs`, `src/app.rs`) and the `kukkuu/` project in the tree for two weeks until `c48e4d3` removed them. Delete the old stack in the same change that replaces it, so nobody has to guess which code is live. Also, when a project moves from a framework to bare metal, the bootloader and partition table become the project's own responsibility (Chapter 10).
 
 **SD Prompt:** `A spacecraft jettisoning heavy booster stages to reveal a sleek, lightweight satellite, minimalism concept, cybernetic aesthetic, clean blue and silver lines, high tech digital art`
 
@@ -764,6 +829,8 @@ The old button handling relied on FreeRTOS task notifications and OS threads (`s
 - Tracks millisecond timestamps from the RTC timer.
 - Detects transitions without background polling tasks or thread allocations.
 - Rejects monotonic clock inconsistencies while remaining completely `no_std` compatible.
+
+**Learning:** The earlier bootloader and partition-table confusion (Chapter 1) became a design rule: validate the real flash layout at startup and refuse to run on a mismatch, rather than assuming the table that was intended is the table that is installed. The queue is also still unproven against real power loss, which is why the README calls it experimental.
 
 ## Chapter 11: Thin Firmware, Testable Library (November 2026)
 
@@ -818,6 +885,14 @@ Several items had their own tests but were never called by the firmware: a WPA2 
 
 Supabase settings now come from `SUPABASE_HOST`, `SUPABASE_ANON_KEY` and `SUPABASE_TABLE` at build time, the same way `KATA_CONFIG` works, so no key is ever committed. At the time of that refactor, the README stated the remaining blocker plainly: both the price API and Supabase were **HTTPS-only**, and plain HTTP got a `301` redirect until a verified TLS client was added in Chapter 12.
 
+### Learning From The Bugs
+
+- A feature build that nobody built was broken for a long time. Build every feature combination in CI (`firmware` and `wifi` now both are).
+- A duplicated `let mut` is invisible in a 470-line function. Small functions with one concern make shadowing and reset mistakes visible, and make them testable.
+- Unit tests that mirror the author's assumptions pass while the assumption is wrong (the existing tests even carried comments about off-screen text). Compare against the real thing: the live API showed c/kWh, not EUR/MWh.
+- Fixed-size buffers need an overflow decision, not an ignored `Result`.
+- Host coverage moved from 37.99% to 94.46% in one commit (`143b6e5`) once decisions lived in the library; it later settled around 92% as TLS and HTTP code grew, and the 90% gate in `tarpaulin.toml` keeps that from sliding.
+
 ### Guard Rails
 
 - `#![warn(missing_docs)]` on the library, with every public item documented.
@@ -853,6 +928,12 @@ At the protocol boundary:
 - `src/supabase.rs` extracts `RecordSync` and `OutcomeDelivery` so uploads wait for a valid clock, back off for 60 seconds after failures instead of retrying every poll cycle, and retain `SyncOutcome` across channel saturation rather than dropping an acknowledgement or wedging `in_flight`.
 
 We also evaluated extracting `src/electricity.rs` into a second workspace crate alongside `crates/crowpanel-ssd1680` and chose to defer: unlike the display driver, the price module is compact (~130 lines of logic), shares this firmware's display formatting and 15-minute refresh state, and has no second consumer yet.
+
+### Learning From The Plan Changing
+
+- An API can change under the code. The v1 hourly price endpoint became v2 quarter-hour prices, and a plan that had assumed plain HTTP met servers that only answer on HTTPS. Read the service's current documentation before building a client.
+- Encryption is not authentication. Chain, hostname (SAN-only), validity dates and a trustworthy clock each need their own test, and the clock itself comes from unauthenticated SNTP, which is why that limitation is stated in the README rather than hidden.
+- Keep unfinished claims honest: hardware verification is still pending, so documentation says "experimental" instead of "working".
 
 ## Current Architecture and What's Next
 
@@ -909,8 +990,333 @@ The project continues toward its goal: a daily kata reminder that combines tradi
 
 **SD Prompt:** `Zen garden with modern e-paper display showing Japanese calligraphy, fusion of traditional and modern, peaceful atmosphere, black and white aesthetic, minimalist composition, inspirational technology meets tradition concept`
 
+## Appendix: Raw Notes from the ESP-IDF Period
+
+_Moved from the README. These are the original working notes from January–February 2025 and October 2025, kept verbatim as a record. The ESP-IDF steps, the custom `--bootloader` runner and the `kukkuu` project are no longer used: the current runner in `.cargo/config.toml` is `espflash flash --monitor --partition-table partitions.csv`, which supplies its own bootloader. Chapters 1 and 2 summarize them and list what was learned._
+
+### Boot loader (ESP-IDF period)
+
+https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/bootloader.html
+
+Initial bootloader was:
+
+```
+ESP-IDF v5.1-beta1-378-gea5e0ff298-dirt 2nd stage bootloader
+```
+
+Started by installing for Windows
+https://dl.espressif.com/dl/esp-idf/
+
+Choosing the latest version (5.4. at the time, released just two days ago) and installing it in `C:\Espressif\frameworks\esp-idf-v5.4`.
+
+```sh
+idf.py create-project kukkuu
+cd kukkuu
+```
+
+Then using "menuconfig" to create some defaults:
+
+```sh
+idf.py menuconfig
+```
+
+Editing `sdkconfig` to `CONFIG_IDF_TARGET="esp32s3"` and `CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y`.
+
+Then needed to clean first
+
+```sh
+idf.py fullclean
+```
+
+Finally creating the boot loader:
+
+```sh
+idf.py bootloader
+```
+
+How does the bootloader image look like?
+
+```sh
+esptool.py image_info .\build\bootloader\bootloader.bin
+```
+
+```
+esptool.py v4.8.1
+File size: 22352 (bytes)
+Detected image type: ESP32-S3
+Image version: 1
+Entry point: 403c899c
+4 segments
+
+Segment 1: len 0x0164c load 0x3fce2810 file_offs 0x00000018 [BYTE_ACCESSIBLE,MEM_INTERNAL,DRAM]
+Segment 2: len 0x00004 load 0x403c8700 file_offs 0x0000166c [MEM_INTERNAL,IRAM]
+Segment 3: len 0x00d7c load 0x403c8704 file_offs 0x00001678 [MEM_INTERNAL,IRAM]
+Segment 4: len 0x03320 load 0x403cb700 file_offs 0x000023fc [MEM_INTERNAL,IRAM]
+Checksum: 96 (valid)
+Validation Hash: 2527a34d14de8e76959bd7d8c7429d897cc37831c2c6774515a4074df043c74f (valid)
+```
+
+Flashing is easy via same tool:
+
+```sh
+idf.py bootloader-flash
+```
+
+Output, repetitive parts omitted:
+
+```
+Executing action: bootloader-flash
+Serial port COM4
+Detecting chip type... ESP32-S3
+Bootloader binary size 0x5750 bytes. 0xa8b0 bytes (66%) free.
+esptool.py v4.8.1
+Chip is ESP32-S3 (QFN56) (revision v0.2)
+Features: WiFi, BLE, Embedded PSRAM 8MB (AP_3v3)
+Crystal is 40MHz
+Changing baud rate to 460800
+Configuring flash size...
+Flash will be erased from 0x00000000 to 0x00005fff...
+SHA digest in image updated
+Compressed 22352 bytes to 14245...
+Writing at 0x00000000... (100 %)
+Wrote 22352 bytes (14245 compressed) at 0x00000000 in 0.6 seconds (effective 298.6 kbit/s)...
+Hash of data verified.
+```
+
+For a full day I was flashing and flashing, changing configuration in ESP-IDF project, but once flashing with
+`espflash`, the ouput told that the older bootloader was still being used.
+
+Finally it turned out that espflash has its own bootloader provided when not using esp-idf-sys package in the project.
+
+```
+runner = "espflash flash --monitor --bootloader kukkuu/build/bootloader/bootloader.bin --partition-table partition-table.bin"
+```
+
+Now the output from `cargo +esp run --release` is
+
+```
+ESP-ROM:esp32s3-20210327
+Build:Mar 27 2021
+rst:0x1 (POWERON),boot:0xb (SPI_FAST_FLASH_BOOT)
+SPIWP:0xee
+mode:DIO, clock div:2
+load:0x3fce2820,len:0x16ec
+load:0x403c8700,len:0x4
+load:0x403c8704,len:0xeac
+load:0x403cb700,len:0x3170
+entry 0x403c894c
+I (31) boot: ESP-IDF v5.4-dirty 2nd stage bootloader
+I (31) boot: Multicore bootloader
+I (31) boot: chip revision: v0.2
+I (31) boot: efuse block revision: v1.3
+I (34) qio_mode: Enabling default flash chip QIO
+I (38) boot.esp32s3: Boot SPI Speed : 40MHz
+I (42) boot.esp32s3: SPI Mode       : QIO
+I (46) boot.esp32s3: SPI Flash Size : 4MB
+I (50) boot: Enabling RNG early entropy source...
+I (54) boot: Partition Table:
+I (57) boot: ## Label            Usage          Type ST Offset   Length
+I (63) boot:  0 nvs              WiFi data        01 02 00009000 00010000
+I (70) boot:  1 phy_init         RF data          01 01 00019000 00010000
+I (76) boot:  2 factory          factory app      00 00 00030000 00300000
+I (83) boot: End of partition table
+I (86) boot: Loaded app from partition at offset 0x30000
+I (91) boot: Disabling RNG early entropy source...
+```
+
+### Debug symbols missing in dev profile
+
+```
+xtensa-esp32-elf-readelf -S target/xtensa-esp32s3-none-elf/debug/mainichikatarenshu
+There are 4 section headers, starting at offset 0x60:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .symtab           SYMTAB          00000000 000034 000010 10      2   1  4
+  [ 2] .strtab           STRTAB          00000000 000044 000001 00      0   0  1
+  [ 3] .shstrtab         STRTAB          00000000 000045 00001b 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+```
+
+At this point
+idf.py erase-flash
+Chip erase completed successfully in 5.0s
+
+to see that there was all the time in use some older partition table, as now there is nothing...
+
+Use menuconfig to set the partion table file as `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"`.
+
+Ok, the bootloader and partition table flashing needs to be done via `idf.py`, and the resulted bootloader used when application is flashed via `espflash`.
+
+Uh, there was nothing coming in the final binary, in both release and dev profiles it was the same, no debug symbols.
+
+Went forward by using the [esp-idf-template](https://github.com/esp-rs/esp-idf-template), but that had immediately problems linking:
+
+```
+error: linking with `ldproxy` failed: exit code: 101
+  = note: [ldproxy] Running ldproxy
+          thread 'main' panicked at C:\Users\Jukka\.cargo\registry\src\index.crates.io-6f17d22bba15001f\ldproxy-0.3.4\src/main.rs:44:13:
+          Cannot locate argument '--ldproxy-linker <linker>'
+          stack backtrace:
+          note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+```
+
+Finally this was solved by having a `build.rs` file with the contents:
+
+```rust
+fn main() {
+    embuild::espidf::sysenv::output();
+}
+```
+
+Now that the build is passing, checking to see what kind of symbols there are:
+
+```
+xtensa-esp32-elf-readelf -S .\target\xtensa-esp32s3-espidf\release\mainichikatarenshu
+There are 37 section headers, starting at offset 0x566f34:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .rtc.text         PROGBITS        600fe000 06c000 000100 00  AX  0   0  4
+  [ 2] .rtc.force_fast   PROGBITS        600fe100 06c100 000020 00  WA  0   0  4
+  [ 3] .rtc_noinit       PROGBITS        50000000 06c120 000000 00   W  0   0  1
+  [ 4] .rtc.force_slow   PROGBITS        50000000 06c120 000000 00   W  0   0  1
+  [ 5] .rtc_reserved     NOBITS          600fffe8 06cfe8 000018 00  WA  0   0  8
+  [ 6] .iram0.vectors    PROGBITS        40374000 01f000 000403 00  AX  0   0  4
+  [ 7] .iram0.text       PROGBITS        40374404 01f404 00dd03 00  AX  0   0  4
+  [ 8] .dram0.dummy      NOBITS          3fc88000 012000 00a200 00  WA  0   0  1
+  [ 9] .dram0.data       PROGBITS        3fc92200 01c200 002954 00  WA  0   0 16
+  [10] .noinit           NOBITS          3fc94b54 000000 000000 00  WA  0   0  1
+  [11] .dram0.bss        NOBITS          3fc94b58 01eb54 000990 00  WA  0   0  8
+  [12] .flash.text       PROGBITS        42000020 02e020 03de38 00  AX  0   0  4
+  [13] .flash_rodat[...] NOBITS          3c000020 001020 040000 00  WA  0   0  1
+  [14] .flash.appdesc    PROGBITS        3c040020 001020 000100 00   A  0   0 16
+  [15] .flash.rodata     PROGBITS        3c040120 001120 0103a8 00  WA  0   0 16
+  [16] .ext_ram.dummy    NOBITS          3c000020 001020 05ffe0 00  WA  0   0  1
+  [17] .iram0.text_end   NOBITS          40382107 02d107 0000f9 00  WA  0   0  1
+  [18] .iram0.data       PROGBITS        40382200 06c120 000000 00   W  0   0  1
+  [19] .iram0.bss        PROGBITS        40382200 06c120 000000 00   W  0   0  1
+  [20] .dram0.heap_start PROGBITS        3fc954e8 06c120 000000 00   W  0   0  1
+  [21] .debug_aranges    PROGBITS        00000000 06c120 007688 00      0   0  8
+  [22] .debug_info       PROGBITS        00000000 0737a8 1e52b6 00      0   0  1
+  [23] .debug_abbrev     PROGBITS        00000000 258a5e 02c1ef 00      0   0  1
+  [24] .debug_line       PROGBITS        00000000 284c4d 11285f 00      0   0  1
+  [25] .debug_frame      PROGBITS        00000000 3974ac 00cba0 00      0   0  4
+  [26] .debug_str        PROGBITS        00000000 3a404c 10920e 01  MS  0   0  1
+  [27] .debug_loc        PROGBITS        00000000 4ad25a 0518f6 00      0   0  1
+  [28] .debug_ranges     PROGBITS        00000000 4feb50 02bc40 00      0   0  8
+  [29] .debug_line_str   PROGBITS        00000000 52a790 001a9d 01  MS  0   0  1
+  [30] .debug_loclists   PROGBITS        00000000 52c22d 00a6d6 00      0   0  1
+  [31] .debug_rnglists   PROGBITS        00000000 536903 000240 00      0   0  1
+  [32] .comment          PROGBITS        00000000 536b43 000093 01  MS  0   0  1
+  [33] .xtensa.info      NOTE            00000000 536bd6 000038 00      0   0  1
+  [34] .symtab           SYMTAB          00000000 536c10 013a80 10     35 1988  4
+  [35] .strtab           STRTAB          00000000 54a690 01c6cc 00      0   0  1
+  [36] .shstrtab         STRTAB          00000000 566d5c 0001d7 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+```
+
+```
+xtensa-esp32-elf-readelf -S .\target\xtensa-esp32s3-espidf\debug\mainichikatarenshu
+There are 37 section headers, starting at offset 0x10c2050:
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .rtc.text         PROGBITS        600fe000 120000 000100 00  AX  0   0  4
+  [ 2] .rtc.force_fast   PROGBITS        600fe100 120100 000020 00  WA  0   0  4
+  [ 3] .rtc_noinit       PROGBITS        50000000 120120 000000 00   W  0   0  1
+  [ 4] .rtc.force_slow   PROGBITS        50000000 120120 000000 00   W  0   0  1
+  [ 5] .rtc_reserved     NOBITS          600fffe8 120fe8 000018 00  WA  0   0  8
+  [ 6] .iram0.vectors    PROGBITS        40374000 034000 000403 00  AX  0   0  4
+  [ 7] .iram0.text       PROGBITS        40374404 034404 00f527 00  AX  0   0  4
+  [ 8] .dram0.dummy      NOBITS          3fc88000 025000 00ba00 00  WA  0   0  1
+  [ 9] .dram0.data       PROGBITS        3fc93a00 030a00 002b9c 00  WA  0   0 16
+  [10] .noinit           NOBITS          3fc9659c 000000 000000 00  WA  0   0  1
+  [11] .dram0.bss        NOBITS          3fc965a0 03359c 0009e0 00  WA  0   0  8
+  [12] .flash.text       PROGBITS        42000020 044020 0dbf46 00  AX  0   0  4
+  [13] .flash_rodat[...] NOBITS          3c000020 001020 0e0000 00  WA  0   0  1
+  [14] .flash.appdesc    PROGBITS        3c0e0020 001020 000100 00   A  0   0 16
+  [15] .flash.rodata     PROGBITS        3c0e0120 001120 023480 00  WA  0   0 16
+  [16] .ext_ram.dummy    NOBITS          3c000020 001020 10ffe0 00  WA  0   0  1
+  [17] .iram0.text_end   NOBITS          4038392b 04392b 0000d5 00  WA  0   0  1
+  [18] .iram0.data       PROGBITS        40383a00 120120 000000 00   W  0   0  1
+  [19] .iram0.bss        PROGBITS        40383a00 120120 000000 00   W  0   0  1
+  [20] .dram0.heap_start PROGBITS        3fc96f80 120120 000000 00   W  0   0  1
+  [21] .debug_aranges    PROGBITS        00000000 120120 031e40 00      0   0  8
+  [22] .debug_info       PROGBITS        00000000 151f60 5f371d 00      0   0  1
+  [23] .debug_abbrev     PROGBITS        00000000 74567d 03cc90 00      0   0  1
+  [24] .debug_line       PROGBITS        00000000 78230d 22eaa0 00      0   0  1
+  [25] .debug_frame      PROGBITS        00000000 9b0db0 00f3e8 00      0   0  4
+  [26] .debug_str        PROGBITS        00000000 9c0198 52e7b4 01  MS  0   0  1
+  [27] .debug_loc        PROGBITS        00000000 eee94c 071c80 00      0   0  1
+  [28] .debug_ranges     PROGBITS        00000000 f605d0 0600d8 00      0   0  8
+  [29] .debug_line_str   PROGBITS        00000000 fc06a8 001a9d 01  MS  0   0  1
+  [30] .debug_loclists   PROGBITS        00000000 fc2145 00a6d6 00      0   0  1
+  [31] .debug_rnglists   PROGBITS        00000000 fcc81b 000240 00      0   0  1
+  [32] .comment          PROGBITS        00000000 fcca5b 000093 01  MS  0   0  1
+  [33] .xtensa.info      NOTE            00000000 fccaee 000038 00      0   0  1
+  [34] .symtab           SYMTAB          00000000 fccb28 032100 10     35 2614  4
+  [35] .strtab           STRTAB          00000000 ffec28 0c3251 00      0   0  1
+  [36] .shstrtab         STRTAB          00000000 10c1e79 0001d7 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+```
+
+Same for both.
+
+It took some time to come back to this project as the Waveshare driver and embedded graphics seemed to be
+hard to get working together.
+Finally when looking at the diff
+https://github.com/caemor/epd-waveshare/compare/v0.5.0...v0.6.0
+and
+https://github.com/embedded-graphics/embedded-graphics
+matcing use cases, got the build to compile with
+minilar text styling in a display created from `VarDisplay::new()` instead of `Display2in9::default()`.
+
+That then revealed that even when the display has two colors, they should not be defined as `embedded_graphics::pixelcolor::BinaryColor:::Off`,
+but as `epd_waveshare::color::Color::White`.
+
+The text started to appear in the screen but they kept drawing om top of existing ones,
+not clearning the screen at any point.
+
+The working module was `epd_waveshare::epd2in9_v2`, but the internal commands might differ, which is why
+other similar board configurations were tried out...
+
+The display is using a driver SSD1680, so perhaps should be looking at some other EPD provier than Waveshare crate.
+
+GitHub search revealed
+https://github.com/embedded-drivers/epd
+and
+https://github.com/mbv/ssd1680
+to be promising ones, the latter being used at https://github.com/mbv/esp32-ssd1680/blob/main/Cargo.toml
+
+None of the drivers seemed fit, since the commands they used were not matching the ones in Arduino examples by Elecrow
+
+Writing my own driver based on mbv/ssd1680
+
+Replaced package `espflash v3.3.0` with `espflash v4.2.0` (executable `espflash.exe`)
+
+After a long battle of comparing a working Arduino example and the Rust driver, finally got the screen to show something.
+
 ## Appendix: Timeline
 
+- **January 6–12, 2025** - ESP-IDF toolchain, second-stage bootloader, missing debug symbols and SPI bring-up (`5566c7a`–`e6117ba`)
+- **January 17–28, 2025** - Dependency pinning (`esp-idf-svc`, `epd-waveshare`), vendoring `mbv/ssd1680`, logging added around the activate command (`ec38e25`–`170587e`)
+- **February 28, 2025** - Reading the specification against the Arduino command bytes (`61cedde`)
 - **October 14, 2025, 11:20 AM** - Driver updates matching C++ implementation
 - **October 14, 2025, 12:11 PM** - Critical BUSY pin fix discovered
 - **October 14, 2025, 12:15 PM** - Polarity inversion fix applied

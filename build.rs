@@ -67,12 +67,33 @@ fn generate_ca_bundle(out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+/// Embed the firmware build time as a Unix-seconds expression in `build_time.rs`.
+///
+/// `SOURCE_DATE_EPOCH` is honored for reproducible builds. The script reruns whenever the
+/// sources or manifests change, so the value is the time of the latest real rebuild.
+fn generate_build_time(out_dir: &Path) -> std::io::Result<()> {
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    for path in ["src", "crates", "Cargo.toml", "Cargo.lock"] {
+        println!("cargo:rerun-if-changed={path}");
+    }
+    let from_env = env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok());
+    let secs = from_env.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs())
+    });
+    std::fs::write(out_dir.join("build_time.rs"), format!("{secs}u64"))
+}
+
 fn main() {
     let out_dir = env::var("OUT_DIR").expect("Cargo sets OUT_DIR");
     let out_dir = Path::new(&out_dir);
     generate_kata_list(out_dir).expect("invalid kata configuration");
     generate_supabase_config(out_dir).expect("cannot write Supabase configuration");
     generate_ca_bundle(out_dir).expect("invalid TLS CA bundle configuration");
+    generate_build_time(out_dir).expect("cannot write build time");
     println!("cargo:rerun-if-changed=build_support/ca_config.rs");
     println!("cargo:rerun-if-changed=build_support/kata_config.rs");
 }

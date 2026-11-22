@@ -10,6 +10,12 @@ pub const MIN_VALID_UNIX_SECS: u64 = 946_684_800;
 
 const MICROS_PER_SEC: u64 = 1_000_000;
 
+/// Unix seconds at which the firmware was built (or `SOURCE_DATE_EPOCH`).
+///
+/// Used as the clock's starting point after a reset, because time never runs backwards
+/// past the moment the running image was produced.
+pub const BUILD_UNIX_SECS: u64 = include!(concat!(env!("OUT_DIR"), "/build_time.rs"));
+
 /// Convert trusted Unix seconds to RTC microseconds.
 ///
 /// Returns `None` if the time is before [`MIN_VALID_UNIX_SECS`], overflows or
@@ -55,6 +61,11 @@ mod tests {
         );
         assert_eq!(rtc_micros_from_unix_secs(MIN_VALID_UNIX_SECS - 1), None);
         assert_eq!(rtc_micros_from_unix_secs(u64::MAX), None);
+    }
+
+    #[test]
+    fn build_time_is_a_valid_clock_value() {
+        assert!(rtc_micros_from_unix_secs(BUILD_UNIX_SECS).is_some());
     }
 
     #[test]
