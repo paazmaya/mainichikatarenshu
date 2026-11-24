@@ -897,8 +897,8 @@ Supabase settings now come from `SUPABASE_HOST`, `SUPABASE_ANON_KEY` and `SUPABA
 
 - `#![warn(missing_docs)]` on the library, with every public item documented.
 - The `write_text` doctest, which had never compiled, was fixed and passes locally via `cargo +stable test --workspace --doc`.
-- To conserve CI minutes, GitHub Actions builds both firmware release feature sets (`firmware` and `wifi`), checks formatting, and runs host unit/integration tests (`--lib --tests`) and host clippy with `-D warnings`.
-- Firmware clippy (`cargo +esp clippy` on both feature sets), documentation tests (`--doc`), and `cargo +stable tarpaulin` (enforcing the 90% coverage gate configured in `tarpaulin.toml`) are run locally.
+- To conserve CI minutes, GitHub Actions builds both firmware release feature sets (`firmware` and `wifi`), checks formatting, runs firmware clippy on the release Wi-Fi build, and runs host unit/integration tests (`--lib --tests`) and host clippy with `-D warnings`.
+- Documentation tests (`--doc`) and `cargo +stable tarpaulin` (enforcing the 90% coverage gate configured in `tarpaulin.toml`) are run locally. Firmware clippy runs on library/binary targets directly (`--features firmware` / `--features wifi`), while host clippy runs with `--target <host-triple> --features test-utils`. Running `cargo clippy --all-targets` without a host target fails because test harnesses require `std`, which does not exist on `xtensa-esp32s3-none-elf` (also why `.vscode/settings.json` disables `rust-analyzer.check.allTargets`).
 
 **SD Prompt:** `Sculptor carving a sleek minimal statue out of a rough block of stone, chips falling away, workshop with neatly organized tools, warm light, black and white ink wash style`
 

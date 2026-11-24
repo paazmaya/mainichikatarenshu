@@ -438,6 +438,12 @@ cargo +stable test --workspace --doc --features test-utils --target <host-triple
 cargo +stable clippy --workspace --lib --tests --features test-utils --target <host-triple> -- -D warnings
 cargo +esp clippy --release --features wifi -- -D warnings
 
+# Applying automatic Clippy fixes
+# On host targets (unit tests, integration tests, and library):
+cargo +stable clippy --fix --all-targets --features test-utils --target <host-triple> --allow-no-vcs
+# On firmware target (device binaries & library):
+cargo clippy --fix --allow-no-vcs --features firmware
+
 # Coverage - needs `cargo install cargo-tarpaulin`; settings in tarpaulin.toml, fails below 90%
 cargo +stable tarpaulin
 
@@ -446,13 +452,22 @@ cargo fmt --all -- --check
 ```
 
 The host triple is, for example, `x86_64-unknown-linux-gnu` or
-`aarch64-apple-darwin`; it is needed because `.cargo/config.toml` defaults to
-the ESP32-S3 target (note: unset `LIBCLANG_PATH` on host runs if
-`export-esp.sh` pointed it at `esp-clang`). To conserve CI minutes, GitHub
-Actions CI runs the firmware release builds for both feature sets, host unit
-and integration tests (`--lib --tests`), formatting, and host clippy;
-documentation tests (`--doc`), firmware clippy, and `cargo +stable tarpaulin`
-are local checks.
+`aarch64-apple-darwin` (you can dynamically pass `$(rustc -vV | sed -n 's/host: //p')`);
+it is needed because `.cargo/config.toml` defaults to the ESP32-S3 target
+`xtensa-esp32s3-none-elf` (note: unset `LIBCLANG_PATH` on host runs if
+`export-esp.sh` pointed it at `esp-clang`).
+
+> **Note on `--all-targets` and bare-metal ESP32:**
+> Running `cargo clippy --all-targets` or `cargo clippy --fix --all-targets` without specifying
+> `--target <host-triple>` fails with `error[E0463]: can't find crate for std`.
+> Because `.cargo/config.toml` defaults to the bare-metal `no_std` target `xtensa-esp32s3-none-elf`
+> (`build-std = ["core", "alloc"]`), passing `--all-targets` causes Cargo to try building test harnesses
+> and host integration tests (`tests/*.rs`) for the bare-metal microcontroller target, which has no
+> standard library (`std`). For this reason, `.vscode/settings.json` configures
+> `"rust-analyzer.check.allTargets": false`. Always provide `--target <host-triple>` when running
+> tests or linting test targets, or lint firmware targets without `--all-targets`.
+
+To conserve CI minutes, GitHub Actions CI runs the firmware release builds for both feature sets, firmware clippy, host unit and integration tests (`--lib --tests`), formatting, and host clippy; documentation tests (`--doc`) and `cargo +stable tarpaulin` are local checks.
 
 On Windows the host test build fails in `mbedtls-rs-sys` with the MSVC toolchain (MbedTLS headers use GCC attributes); run the host tests on Linux, WSL or the Dev Container, as CI does.
 

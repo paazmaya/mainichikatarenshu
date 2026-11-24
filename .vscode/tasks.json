@@ -1,0 +1,58 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Clippy (Firmware)",
+      "type": "shell",
+      "command": "cargo clippy --features firmware",
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "Clippy Fix (Firmware)",
+      "type": "shell",
+      "command": "cargo clippy --fix --allow-no-vcs --features firmware",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "Clippy (Host)",
+      "type": "shell",
+      "command": "cargo +stable clippy --workspace --all-targets --features test-utils --target $(rustc -vV | sed -n 's/host: //p') -- -D warnings",
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    },
+    {
+      "label": "Clippy Fix (Host)",
+      "type": "shell",
+      "command": "cargo +stable clippy --fix --all-targets --features test-utils --target $(rustc -vV | sed -n 's/host: //p') --allow-no-vcs",
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "Test (Host)",
+      "type": "shell",
+      "command": "cargo +stable test --workspace --lib --tests --features test-utils --target $(rustc -vV | sed -n 's/host: //p')",
+      "problemMatcher": ["$rustc"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Build Firmware",
+      "type": "shell",
+      "command": "cargo build --release --features firmware",
+      "problemMatcher": ["$rustc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Build Firmware (Wi-Fi)",
+      "type": "shell",
+      "command": "cargo build --release --features wifi",
+      "problemMatcher": ["$rustc"],
+      "group": "build"
+    }
+  ]
+}

@@ -52,6 +52,9 @@ jobs:
       - name: Build with Wi-Fi
         run: cargo +esp build --release --features wifi
 
+      - name: Run clippy on firmware
+        run: cargo +esp clippy --release --features wifi -- -D warnings
+
       - name: Setup Rust for tests
         uses: chainguard-actions/dtolnay-rust-toolchain@7b7b95556805186e9eb5b44efdafea3a47dbaa56 # v1
         with:
@@ -68,7 +71,7 @@ jobs:
       - name: Run clippy on host libraries and tests
         env:
           LIBCLANG_PATH: ""
-        run: cargo +stable clippy --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu -- -D warnings
+        run: cargo +stable clippy --workspace --all-targets --features test-utils --target x86_64-unknown-linux-gnu -- -D warnings
 
       - name: Archive artifact
         uses: chainguard-actions/actions-upload-artifact@c91615377dcc230c6b156542d25044f9b8d80dd8 # v7.0.2
