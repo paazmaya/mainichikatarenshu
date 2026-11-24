@@ -71,8 +71,10 @@ Build the experimental firmware after installing the ESP Xtensa toolchain
 (see [Toolchain setup](#toolchain-setup); `xtensa-esp32s3-elf-gcc` on `PATH` and
 `LIBCLANG_PATH` pointing to `esp-clang/lib`, as set up by `export-esp.sh` /
 `export-esp.ps1`) and Rust 1.95 or newer. Building with `--features wifi` (or host
-`--features test-utils`) also requires `cmake` (>= 3.19) and `ninja` to compile
-MbedTLS. The binary has `required-features = ["firmware"]`, so a plain
+`--features test-utils`) also requires `cmake` (>= 3.19), `ninja`, and
+`libclang` to compile MbedTLS. Host builds from the published `mbedtls-rs-sys`
+crate additionally need the matching Mbed TLS Python `framework/scripts`
+directory on `PYTHONPATH`. The binary has `required-features = ["firmware"]`, so a plain
 `cargo build` builds only the library:
 
 ```sh

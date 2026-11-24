@@ -34,6 +34,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout Mbed TLS build framework
+        uses: chainguard-actions/actions-checkout@37298d8de412b35988dd165ffae45f45b329d365 # v7.0.1
+        with:
+          repository: espressif/mbedtls
+          ref: ffb280bb63c78bfec1e1ab55040671768c85c923
+          path: .ci/mbedtls
+          persist-credentials: false
+
       - name: Install native TLS build dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build libclang-dev
 
@@ -62,7 +70,7 @@ jobs:
 
       - name: Run host tests
         env:
-          LIBCLANG_PATH: ""
+          PYTHONPATH: ${{ github.workspace }}/.ci/mbedtls/framework/scripts
         run: cargo +stable test --workspace --lib --tests --features test-utils --target x86_64-unknown-linux-gnu
 
       - name: Check formatting
@@ -70,7 +78,7 @@ jobs:
 
       - name: Run clippy on host libraries and tests
         env:
-          LIBCLANG_PATH: ""
+          PYTHONPATH: ${{ github.workspace }}/.ci/mbedtls/framework/scripts
         run: cargo +stable clippy --workspace --all-targets --features test-utils --target x86_64-unknown-linux-gnu -- -D warnings
 
       - name: Archive artifact
