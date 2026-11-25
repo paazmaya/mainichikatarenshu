@@ -70,7 +70,7 @@ jobs:
 
       - name: Configure host libclang
         run: |
-          LIBCLANG_SO="$(ldconfig -p | awk '/libclang\.so/{print $NF; exit}')"
+          LIBCLANG_SO="$(find /usr/lib/llvm-*/lib /usr/lib/x86_64-linux-gnu -name 'libclang*.so*' 2>/dev/null | sort -V | tail -n 1)"
           test -n "$LIBCLANG_SO"
           echo "LIBCLANG_PATH=${LIBCLANG_SO%/*}" >> "$GITHUB_ENV"
           /usr/bin/clang --version
